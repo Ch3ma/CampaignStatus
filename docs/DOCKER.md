@@ -15,7 +15,7 @@ Cuando el registro indique que los emuladores están listos, presiona Ctrl+C par
 docker compose exec emulators npm run seed
 ```
 
-Abre http://127.0.0.1:5173 y elige la cuenta ficticia de Agente o Handler. La interfaz de Emulator Suite está en http://127.0.0.1:4000. Los servicios publicados están vinculados a loopback. Los contenedores usan el proyecto de emulación `demo-black-archive` y vuelven a crear sus datos en memoria al reiniciar. El volumen conserva las descargas de los emuladores.
+Abre http://127.0.0.1:5173 y elige la cuenta ficticia de Agente o Handler. La interfaz de Emulator Suite está en http://127.0.0.1:4000. Los servicios publicados están vinculados a loopback. Los contenedores usan el proyecto `demo-black-archive`. Compose conserva descargas y datos en volúmenes distintos. `docker compose down` da tiempo al emulador para exportar las cuentas, las fichas y sus archivos. El siguiente `docker compose up -d` con el mismo proyecto importa el estado. Un cierre abrupto puede perder cambios desde la última exportación. Conserva el volumen de datos para conservar los borradores.
 
 ## Pruebas
 
@@ -25,7 +25,7 @@ docker compose run --rm --no-deps emulators npm run test:rules
 docker compose down
 ```
 
-Para probar el visor en Chromium, conserva la demo en ejecución y ejecuta `npm ci`, `npx playwright-core install chromium` y `npm run test:browser` en el host. La prueba usa la semilla de una instancia local recién iniciada.
+Para probar los visores de imagen y PDF en Chromium, conserva la demo en ejecución y ejecuta `npm ci`, `npx playwright-core install chromium` y `npm run test:browser` en el host. Para la suite completa, usa una instancia de pruebas recién sembrada y separada de tus datos de campaña.
 
 Los contenedores de prueba usan sus propios puertos internos y pueden ejecutarse junto a la demo. Si cambias el código, ejecuta `docker compose build` para actualizar las imágenes de prueba.
 

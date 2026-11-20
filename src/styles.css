@@ -200,3 +200,25 @@ h2 { font-size: 1.2rem; letter-spacing: -.025em; }
 .image-tools output { font-family: var(--mono); }
 .image-scroll { margin-top: .65rem; min-width: 0; max-height: 70vh; overflow: auto; background: var(--background); }
 .image-scroll img { display: block; max-width: none; height: auto; }
+
+.image-scroll canvas { max-width: none; height: auto; vertical-align: middle; }
+.pdf-description, .pdf-controls, .pdf-text { margin-top: .65rem; }
+.pdf-text summary { cursor: pointer; }
+.pdf-text p { margin-bottom: 0; overflow-wrap: anywhere; }
+
+@media print {
+  .handout-nav, .image-viewer, .image-tools, .pdf-text, .pdf-description { display: none; }
+  .print-handout { display: block; padding: 0; background: white; border: 0; }
+  .print-handout .image-scroll { max-height: none; overflow: visible; background: white; }
+  .print-handout canvas { width: 100% !important; height: auto; break-inside: avoid; }
+}
+
+.file-selection { overflow-wrap: anywhere; margin: 0; font-family: var(--mono); }
+.reference-editor, .private-editor { min-width: 0; padding: .6rem; border: 1px solid var(--line); }
+.reference-editor { display: grid; gap: .5rem; }
+.reference-editor > button { justify-self: start; }
+.reference-editor ul { padding-left: 1rem; margin: 0; }
+.reference-editor li { overflow-wrap: anywhere; margin-block: .35rem; }
+.reference-editor li button { margin-inline-start: .45rem; }
+.private-editor > summary { cursor: pointer; color: var(--green); }
+.private-editor[open] > :not(summary) { margin-top: .55rem; }

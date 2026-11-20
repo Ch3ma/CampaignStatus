@@ -63,6 +63,10 @@ service cloud.firestore {
         allow read, write: if isHandler(cellId);
       }
 
+      function localHandoutWrites() {
+        return false; // Emulator handout writes
+      }
+
       match /handouts/{handoutId} {
         function handoutPath() {
           return /databases/$(database)/documents/cells/$(cellId)/handouts/$(handoutId);
@@ -75,6 +79,41 @@ service cloud.firestore {
 
         function released() {
           return get(handoutPath()).data.status == 'published';
+        }
+
+        function editableLocally() {
+          return localHandoutWrites() && isHandler(cellId)
+            && getAfter(handoutPath()).data.status in ['draft', 'review', 'archived'];
+        }
+
+        function validTargetId(id) {
+          return id is string && id.matches('^[A-Za-z0-9_-]{1,128}$');
+        }
+
+        function validEdge(edge, kinds) {
+          return edge is map && edge.keys().hasOnly(['kind', 'targetId'])
+            && edge.kind in kinds && validTargetId(edge.targetId);
+        }
+
+        function validPrivateEdges(edges) {
+          let kinds = ['operations', 'handouts', 'dossiers', 'personnel', 'clues'];
+          return edges is list && edges.size() <= 6
+            && (edges.size() < 1 || validEdge(edges[0], kinds))
+            && (edges.size() < 2 || validEdge(edges[1], kinds))
+            && (edges.size() < 3 || validEdge(edges[2], kinds))
+            && (edges.size() < 4 || validEdge(edges[3], kinds))
+            && (edges.size() < 5 || validEdge(edges[4], kinds))
+            && (edges.size() < 6 || validEdge(edges[5], kinds));
+        }
+
+        function validProvenance(data) {
+          return data.keys().hasOnly(['document', 'page', 'section', 'adaptationNotes', 'supportingPages', 'references'])
+            && data.document is string && data.document.size() <= 180
+            && data.page is string && data.page.size() <= 60
+            && data.section is string && data.section.size() <= 180
+            && data.adaptationNotes is string && data.adaptationNotes.size() <= 2400
+            && data.supportingPages is string && data.supportingPages.size() <= 120
+            && validPrivateEdges(data.references);
         }
 
         function validHandout() {
@@ -90,7 +129,7 @@ service cloud.firestore {
             && data.tags is string && data.tags.size() <= 160
             && data.classification is string && data.classification.size() > 0 && data.classification.size() <= 48
             && data.alt is string && data.alt.size() > 0 && data.alt.size() <= 240
-            && data.downloadAllowed is bool && data.mime in ['image/png', 'image/jpeg', 'image/webp']
+            && data.downloadAllowed is bool && data.mime in ['image/png', 'image/jpeg', 'image/webp', 'application/pdf']
             && data.byteLength is int && data.byteLength > 0 && data.byteLength <= 102400
             && data.status in ['draft', 'review', 'published', 'archived']
             && data.updatedAt == request.time;
@@ -118,26 +157,37 @@ service cloud.firestore {
           && (request.resource.data.status != 'published' || releasable());
 
         match /files/{fileId} {
+          function validFile() {
+            let parent = getAfter(handoutPath()).data;
+            let data = request.resource.data;
+            return parent.status == 'draft' && parent.createdAt == request.time
+              && data.keys().hasOnly(['bytes']) && data.bytes is bytes
+              && data.bytes.size() > 0 && data.bytes.size() <= 102400
+              && data.bytes.size() == parent.byteLength;
+          }
+
           allow get: if fileId == 'preview' && (isHandler(cellId) || (isAgent(cellId) && released()
-            && resource.data.keys().hasOnly(['bytes'])));
+            && resource.data.keys().hasOnly(['bytes']) && resource.data.bytes is bytes));
+          allow create: if fileId == 'preview' && localHandoutWrites() && isHandler(cellId) && validFile();
         }
 
         match /private/{entryId} {
           allow get: if entryId == 'provenance' && isHandler(cellId);
+          allow create, update: if entryId == 'provenance' && editableLocally()
+            && validProvenance(request.resource.data);
         }
 
         match /relations/{slot} {
-          function visibleRelation() {
-            let kind = resource.data.kind;
-            return (slot == 'operation' ? kind == 'operations'
+          function validSlot(data) {
+            return slot == 'operation' ? validEdge(data, ['operations'])
               : slot in ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
-                && kind in ['handouts', 'dossiers', 'personnel', 'clues'])
-              && resource.data.keys().hasOnly(['kind', 'targetId'])
-              && resource.data.targetId is string && resource.data.targetId.matches('^[A-Za-z0-9_-]{1,128}$')
-              && visibleTarget(kind, resource.data.targetId);
+                && validEdge(data, ['handouts', 'dossiers', 'personnel', 'clues']);
           }
 
-          allow get: if isHandler(cellId) || (isAgent(cellId) && released() && visibleRelation());
+          allow get: if isHandler(cellId) || (isAgent(cellId) && released()
+            && validSlot(resource.data) && visibleTarget(resource.data.kind, resource.data.targetId));
+          allow create, update: if editableLocally() && validSlot(request.resource.data);
+          allow delete: if editableLocally() && slot in ['r1', 'r2', 'r3', 'r4', 'r5', 'r6'];
         }
       }
 

@@ -18,17 +18,17 @@ Los retratos autorizados se guardan en Firestore junto a la ficha, como JPEG, PN
 
 Las operaciones futuras y el contenido real de campaña deben comenzar como borradores privados. La semilla incluye una operación ficticia e independiente y vive en `scripts/`.
 
-## Handouts · Corte A
+## Handouts de demostración
 
 Las rutas son relativas a `cells/{cellId}`.
 
 | Ruta | Datos | Acceso |
 | --- | --- | --- |
 | `handouts/{id}` | Título, categoría, resumen, texto alternativo, fecha narrativa, etiquetas, clasificación, MIME, longitud, descarga habilitada, estado y auditoría | Handler o agente tras publicación |
-| `handouts/{id}/files/preview` | Imagen sintética de demostración, hasta 100 KiB | Handler o agente mientras esté publicado |
+| `handouts/{id}/files/preview` | Bytes inmutables de PNG, JPEG, WebP o PDF, hasta 100 KiB en emulador | Handler o agente mientras esté publicado |
 | `handouts/{id}/relations/{slot}` | Tipo e ID del destino, incluida la operación | Handler o agente con origen y destino publicados |
 | `handouts/{id}/private/provenance` | Documento, página, sección, notas, páginas de apoyo y referencias privadas | Handler |
 
-El índice accesible al agente no guarda IDs de relación, conteos ni nombres internos. Para cada ficha, el cliente consulta posiciones fijas de relación, incluida `operation`. Las reglas deniegan posiciones vacías y destinos no autorizados. Sólo se admiten vínculos visibles a operaciones, handouts, expedientes, personal y evidencias. Las relaciones reservadas se guardan en el documento privado, ajenas a dichas posiciones.
+El índice accesible al agente no guarda IDs de relación, conteos ni nombres internos. Para cada ficha, el cliente consulta posiciones fijas de relación, incluida `operation`. Las reglas deniegan posiciones vacías y destinos no autorizados. Sólo se admiten vínculos visibles a operaciones, handouts, expedientes, personal y evidencias. Las relaciones reservadas se guardan en el documento privado, ajenas a dichas posiciones. Los registros enlazados se identifican por tipo e ID. El campo privado de procedencia acepta hasta seis referencias internas y la ficha admite hasta seis vínculos visibles más la operación.
 
-Crear una ficha exige estado `draft`, autor y fecha del servidor. Para publicar, las reglas verifican la operación publicada y la imagen registrada y conservan una marca de tiempo junto al UID del Handler. La operación vinculada deja de aparecer en la ficha si se retira dicha operación. Cada handout mantiene su propio estado de publicación.
+El panel guarda la ficha, el archivo, los vínculos y la procedencia en una sola escritura atómica en el emulador. Crear una ficha exige estado `draft`, autor y fecha del servidor. Para publicar, las reglas verifican la operación publicada y el archivo registrado y conservan una marca de tiempo junto al UID del Handler. La operación vinculada deja de aparecer en la ficha si se retira dicha operación. Cada handout mantiene su propio estado de publicación.

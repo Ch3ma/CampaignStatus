@@ -28,7 +28,7 @@ Abre la URL que muestra Vite (normalmente http://localhost:5173) y elige **Entra
 
 **Recorrido sugerido.** Entra como agente y verifica que el expediente «Informe en preparación» esté ausente. Cierra sesión, entra como Handler y cambia la visibilidad del expediente a **Publicado**. Vuelve como agente para consultar el expediente y sus controles de impresión. Cambia la visibilidad a **Archivado** para retirarlo. Puedes usar dos ventanas privadas independientes para observar los cambios en vivo.
 
-El programa de semilla apunta a Auth y Firestore en loopback con el ID `demo-black-archive`. Repetir el comando conserva los registros existentes. El emulador pierde los cambios al detenerse salvo que configures una exportación e importación local. Su interfaz de administración es http://localhost:4000.
+El programa de semilla apunta a Auth y Firestore en loopback con el ID `demo-black-archive`. Repetir el comando conserva los registros existentes. Con Docker, un apagado normal conserva los cambios en el volumen de datos. Con `npm run emulators` fuera de Docker, los cambios se mantienen durante la sesión local. Su interfaz de administración es http://localhost:4000.
 
 ## Verificar
 
@@ -52,7 +52,7 @@ Detén primero el emulador manual antes de ejecutar `test:rules`. Ese comando in
 
 Las credenciales de Git y GCP se gestionan con sus mecanismos de inicio de sesión existentes. Mantén tokens y claves fuera de los archivos del proyecto. Las rutas de esta fase usan `cell-a`; las membresías y nombres visibles son datos de Firestore.
 
-- [Handouts multimedia y demo del Corte A](docs/HANDOUTS.md)
+- [Handouts multimedia · carga local de imagen y PDF](docs/HANDOUTS.md)
 - [Pruebas locales e imagen estática con Docker](docs/DOCKER.md)
 - [Arquitectura y bootstrap](docs/ARCHITECTURE.md)
 - [Modelo de contenido y publicación](docs/CONTENT_MODEL.md)

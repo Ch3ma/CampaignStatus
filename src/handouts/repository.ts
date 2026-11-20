@@ -1,16 +1,19 @@
+import type { CheckedHandout } from './upload';
 import {
   Bytes, collection, doc, getDocFromServer, onSnapshot, query, runTransaction,
-  serverTimestamp, where, type DocumentData,
+  serverTimestamp, where, writeBatch, type DocumentData, type DocumentReference,
 } from 'firebase/firestore';
 import { cellId } from '../domain';
 import { database, isDemo, recordVersion, RecordChangedError } from '../firebase';
 import {
-  imageMatches, playerCanSeeTarget, relationKinds, relationSlots,
-  type Handout, type HandoutFields, type LinkedRecord, type Provenance, type Relation,
+  fileMatches, playerCanSeeTarget, relationKinds, relationSlots, visibleRelationSlots, emptyRelations,
+  type Handout, type HandoutFields, type LinkedRecord, type Provenance, type Relation, type RelationFields,
 } from './model';
 
 const collectionRef = () => collection(database(), 'cells', cellId, 'handouts');
 const recordRef = (id: string) => doc(collectionRef(), id);
+const provenanceRef = (target: DocumentReference) => doc(target, 'private', 'provenance');
+const relationRef = (target: DocumentReference, slot: string) => doc(target, 'relations', slot);
 
 function fromDocument(id: string, data: DocumentData): Handout {
   return {
@@ -31,14 +34,14 @@ export function watchHandouts(handling: boolean, ready: (records: Handout[] | nu
   }, fail);
 }
 
-export async function getImage(handout: Pick<Handout, 'id' | 'mime' | 'byteLength'>) {
+export async function getHandoutFile(handout: Pick<Handout, 'id' | 'mime' | 'byteLength'>) {
   if (!isDemo) throw new Error('El visor de prueba requiere emuladores.');
   const snapshot = await getDocFromServer(doc(recordRef(handout.id), 'files', 'preview'));
   const stored: unknown = snapshot.data()?.bytes;
-  if (!(stored instanceof Bytes)) throw new Error('La imagen no está disponible.');
+  if (!(stored instanceof Bytes)) throw new Error('El archivo no está disponible.');
   const bytes = new Uint8Array(stored.toUint8Array());
-  if (bytes.length !== handout.byteLength || !imageMatches(bytes, handout.mime)) {
-    throw new Error('La imagen no coincide con su ficha.');
+  if (bytes.length !== handout.byteLength || !fileMatches(bytes, handout.mime)) {
+    throw new Error('El archivo no coincide con su ficha.');
   }
   return new Blob([bytes], { type: handout.mime });
 }
@@ -87,7 +90,7 @@ export function watchRelations(id: string, simulatePlayer: boolean, receive: (li
 }
 
 export async function getProvenance(id: string) {
-  const snapshot = await getDocFromServer(doc(recordRef(id), 'private', 'provenance'));
+  const snapshot = await getDocFromServer(provenanceRef(recordRef(id)));
   const data = snapshot.data() as Provenance | undefined;
   if (!data) return null;
   const references = await Promise.all(data.references.map(async (edge) => {
@@ -97,7 +100,52 @@ export async function getProvenance(id: string) {
   return { ...data, references };
 }
 
-export async function updateHandout(handout: Handout, update: HandoutFields | 'published' | 'archived' | 'draft', uid: string) {
+export async function getRelationsForEdit(id: string): Promise<RelationFields> {
+  const target = recordRef(id);
+  const [provenance, operation, ...visible] = await Promise.all([
+    getDocFromServer(provenanceRef(target)),
+    ...relationSlots.map((slot) => getDocFromServer(relationRef(target, slot))),
+  ]);
+  return {
+    operationId: operation.data()?.targetId ?? '',
+    visible: visible.flatMap((entry) => entry.exists() ? [entry.data() as Relation] : []),
+    provenance: (provenance.data() as Provenance | undefined) ?? emptyRelations.provenance,
+  };
+}
+
+type RelationWriter = {
+  set(ref: DocumentReference, data: DocumentData): unknown;
+  delete(ref: DocumentReference): unknown;
+};
+
+function writeRelations(writer: RelationWriter, target: DocumentReference, data: RelationFields, editing: boolean) {
+  writer.set(provenanceRef(target), data.provenance);
+  writer.set(relationRef(target, 'operation'), { kind: 'operations', targetId: data.operationId });
+  for (const [index, slot] of visibleRelationSlots.entries()) {
+    const link = data.visible[index];
+    if (link) writer.set(relationRef(target, slot), link);
+    else if (editing) writer.delete(relationRef(target, slot));
+  }
+}
+
+export async function createHandout(fields: HandoutFields, relations: RelationFields, file: CheckedHandout, uid: string) {
+  if (!isDemo) throw new Error('La carga requiere emuladores locales.');
+  const target = doc(collectionRef());
+  const batch = writeBatch(database());
+  batch.set(target, {
+    ...fields, mime: file.mime, byteLength: file.bytes.length, status: 'draft',
+    createdAt: serverTimestamp(), createdBy: uid, updatedAt: serverTimestamp(), publishedAt: null, publishedBy: '',
+  });
+  batch.set(doc(target, 'files', 'preview'), { bytes: Bytes.fromUint8Array(file.bytes) });
+  writeRelations(batch, target, relations, false);
+  await batch.commit();
+  return target.id;
+}
+
+export async function updateHandout(
+  handout: Handout, update: HandoutFields | 'published' | 'archived' | 'draft', uid: string, relations?: RelationFields,
+) {
+  if (relations && !isDemo) throw new Error('La edición de referencias requiere emuladores locales.');
   const target = recordRef(handout.id);
   await runTransaction(database(), async (transaction) => {
     const current = (await transaction.get(target)).data();
@@ -110,5 +158,6 @@ export async function updateHandout(handout: Handout, update: HandoutFields | 'p
       ...fields, updatedAt: serverTimestamp(),
       ...(publishing ? { publishedAt: serverTimestamp(), publishedBy: uid } : {}),
     });
+    if (relations) writeRelations(transaction, target, relations, true);
   });
 }

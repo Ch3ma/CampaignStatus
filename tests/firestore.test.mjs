@@ -6,10 +6,11 @@ import { initializeApp, deleteApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth, signInWithEmailAndPassword } from 'firebase/auth';
 import {
   Bytes, collection, connectFirestoreEmulator, deleteDoc, doc, getDocFromServer, getDocsFromServer, getFirestore,
-  query, setDoc, updateDoc, where, serverTimestamp, Timestamp, terminate,
+  query, setDoc, updateDoc, where, serverTimestamp, Timestamp, terminate, writeBatch,
 } from 'firebase/firestore';
 
 import { demoImage } from '../scripts/demo-image.mjs';
+import { demoPdf } from '../scripts/demo-pdf.mjs';
 
 const projectId = 'demo-black-archive';
 const cell = 'cells/cell-a';
@@ -22,9 +23,7 @@ const record = (status = 'published', extra = {}) => ({
 let env;
 
 before(async () => {
-  env = await initializeTestEnvironment({
-    projectId, firestore: { rules: readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8') },
-  });
+  env = await initializeTestEnvironment({ projectId });
   await env.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     const fixtures = {
@@ -210,4 +209,128 @@ test('handout bytes, provenance and links respect publication and target permiss
   await assertSucceeds(updateDoc(doc(handler, path), { status: 'archived', updatedAt: serverTimestamp() }));
   await assertFails(read(agent, 'files', 'preview'));
   await assertFails(read(agent, 'relations', 'operation'));
+});
+
+test('PDF uses the same server-validated release and protected byte path', async () => {
+  const handler = env.authenticatedContext('handler').firestore();
+  const agent = env.authenticatedContext('agent').firestore();
+  const path = `${cell}/handouts/demo-pdf`;
+  const pdf = await demoPdf();
+  const recordRef = doc(handler, path);
+  const fileRef = doc(agent, path, 'files', 'preview');
+  const metadata = {
+    title: 'PDF ficticio', category: 'Prueba', summary: '', narrativeDate: '', tags: '',
+    classification: 'RESTRICTED', alt: 'Dos páginas ficticias', downloadAllowed: false,
+    mime: 'application/pdf', byteLength: pdf.length, status: 'draft',
+    createdAt: serverTimestamp(), createdBy: 'handler', publishedAt: null, publishedBy: '',
+    updatedAt: serverTimestamp(),
+  };
+  await assertFails(setDoc(recordRef, { ...metadata, mime: 'application/zip' }));
+  await assertFails(setDoc(recordRef, { ...metadata, byteLength: 102401 }));
+  await assertSucceeds(setDoc(recordRef, metadata));
+  await env.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await Promise.all([
+      setDoc(doc(db, cell, 'operations', 'pdf-operation'), record()),
+      setDoc(doc(db, path, 'files', 'preview'), { bytes: Bytes.fromUint8Array(pdf) }),
+      setDoc(doc(db, path, 'relations', 'operation'), { kind: 'operations', targetId: 'pdf-operation' }),
+    ]);
+  });
+  await assertFails(getDocFromServer(fileRef));
+  await assertSucceeds(updateDoc(recordRef, {
+    status: 'published', publishedAt: serverTimestamp(), publishedBy: 'handler', updatedAt: serverTimestamp(),
+  }));
+  assert.deepEqual((await assertSucceeds(getDocFromServer(fileRef))).data().bytes.toUint8Array(), pdf);
+  await assertSucceeds(updateDoc(recordRef, { status: 'archived', updatedAt: serverTimestamp() }));
+  await assertFails(getDocFromServer(fileRef));
+});
+
+function upload(db, path, actor, bytes, overrides = {}) {
+  const batch = writeBatch(db);
+  batch.set(doc(db, path), {
+    title: 'Carga local sintética', category: '', summary: '', narrativeDate: '', tags: '',
+    classification: 'RESTRICTED', alt: 'Archivo de prueba', downloadAllowed: false, mime: 'image/png',
+    byteLength: bytes.length, status: 'draft', createdAt: serverTimestamp(), createdBy: actor,
+    publishedAt: null, publishedBy: '', updatedAt: serverTimestamp(), ...overrides,
+  });
+  batch.set(doc(db, path, 'files', 'preview'), { bytes: Bytes.fromUint8Array(bytes) });
+  batch.set(doc(db, path, 'relations', 'operation'), { kind: 'operations', targetId: 'upload-operation' });
+  batch.set(doc(db, path, 'relations', 'r1'), { kind: 'dossiers', targetId: 'upload-public' });
+  batch.set(doc(db, path, 'relations', 'r2'), { kind: 'dossiers', targetId: 'upload-draft' });
+  batch.set(doc(db, path, 'private', 'provenance'), {
+    document: 'Fuente local de prueba', page: '3', section: 'Interna', adaptationNotes: 'Notas reservadas',
+    supportingPages: '4–5', references: [{ kind: 'personnel', targetId: 'reserved-person' }],
+  });
+  return batch.commit();
+}
+
+test('local upload, references and provenance commit atomically and remain protected', async () => {
+  const handler = env.authenticatedContext('handler').firestore();
+  const agent = env.authenticatedContext('agent').firestore();
+  const foreign = env.authenticatedContext('nonmember').firestore();
+  const path = `${cell}/handouts/uploaded`;
+  const image = demoImage();
+  await env.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await Promise.all([
+      setDoc(doc(db, cell, 'operations', 'upload-operation'), record()),
+      setDoc(doc(db, cell, 'dossiers', 'upload-public'), record()),
+      setDoc(doc(db, cell, 'dossiers', 'upload-draft'), record('draft')),
+    ]);
+  });
+
+  await assertFails(upload(agent, path, 'agent', image));
+  await assertFails(upload(foreign, path, 'nonmember', image));
+  await assertFails(upload(handler, path, 'handler', image, { byteLength: image.length - 1 }));
+  await assertFails(upload(handler, path, 'handler', image, { mime: 'application/octet-stream' }));
+  await assertFails(upload(handler, path, 'handler', new Uint8Array(102401), { byteLength: 1 }));
+  assert.equal((await assertSucceeds(getDocFromServer(doc(handler, path)))).exists(), false);
+
+  await assertSucceeds(upload(handler, path, 'handler', image));
+  const get = (db, ...suffix) => getDocFromServer(doc(db, path, ...suffix));
+  const visible = doc(handler, path, 'relations', 'r1');
+  const provenance = doc(handler, path, 'private', 'provenance');
+  await assertSucceeds(get(handler, 'files', 'preview'));
+  await assertSucceeds(get(handler, 'private', 'provenance'));
+  await assertFails(updateDoc(provenance, { references: [{ kind: 'messages', targetId: 'secret' }] }));
+  await assertFails(setDoc(doc(handler, path, 'relations', 'r3'), { kind: 'dossiers', targetId: 'bad/path' }));
+  await assertFails(setDoc(doc(handler, path, 'relations', 'r3'), { kind: 'dossiers', targetId: 'upload-public', secret: true }));
+  await assertFails(setDoc(doc(handler, path, 'files', 'preview'), { bytes: Bytes.fromUint8Array(image) }));
+  for (const suffix of [[], ['files', 'preview'], ['relations', 'r1'], ['private', 'provenance']]) {
+    await assertFails(get(agent, ...suffix));
+    await assertFails(get(foreign, ...suffix));
+  }
+  await assertSucceeds(updateDoc(doc(handler, path), {
+    status: 'published', updatedAt: serverTimestamp(), publishedAt: serverTimestamp(), publishedBy: 'handler',
+  }));
+  await assertSucceeds(get(agent, 'files', 'preview'));
+  await assertSucceeds(get(agent, 'relations', 'r1'));
+  await assertFails(get(agent, 'relations', 'r2'));
+  await assertFails(get(agent, 'private', 'provenance'));
+  await assertFails(updateDoc(visible, { targetId: 'upload-draft' }));
+  await assertFails(updateDoc(provenance, { document: 'Changed while published' }));
+
+  const edit = writeBatch(handler);
+  edit.update(doc(handler, path), { status: 'review', updatedAt: serverTimestamp() });
+  edit.delete(visible);
+  edit.update(provenance, { page: '7' });
+  await assertSucceeds(edit.commit());
+  await assertFails(get(agent, 'files', 'preview'));
+  assert.equal((await assertSucceeds(get(handler, 'private', 'provenance'))).data().page, '7');
+  await assertSucceeds(updateDoc(doc(handler, path), { status: 'archived', updatedAt: serverTimestamp() }));
+  await assertFails(get(agent, 'files', 'preview'));
+});
+
+test('production rules deny the local upload batch', async () => {
+  const production = await initializeTestEnvironment({
+    projectId, firestore: { rules: readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8') },
+  });
+  try {
+    const handler = production.authenticatedContext('handler').firestore();
+    const path = `${cell}/handouts/production-upload-denied`;
+    await assertFails(upload(handler, path, 'handler', demoImage()));
+    assert.equal((await assertSucceeds(getDocFromServer(doc(handler, path)))).exists(), false);
+  } finally {
+    await production.cleanup();
+  }
 });

@@ -1,4 +1,5 @@
-import { clampZoom, imageDownloadName, imageMatches, playerCanSeeTarget } from '../src/handouts/model.ts';
+import { inspectHandoutFile } from '../src/handouts/upload.ts';
+import { clampPage, clampZoom, handoutDownloadName, fileMatches, playerCanSeeTarget } from '../src/handouts/model.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { accessState, emptyRecord, filterDossiers, safePhoto } from '../src/domain.ts';
@@ -30,11 +31,11 @@ test('image viewer bounds zoom and only accepts supported raster signatures', ()
   assert.equal(clampZoom(40), 50);
   assert.equal(clampZoom(260), 250);
   assert.equal(clampZoom(125), 125);
-  assert.equal(imageMatches(Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10), 'image/png'), true);
-  assert.equal(imageMatches(Uint8Array.of(255, 216, 255), 'image/jpeg'), true);
-  assert.equal(imageMatches(new TextEncoder().encode('RIFF0000WEBPVP8 '), 'image/webp'), true);
-  assert.equal(imageMatches(new TextEncoder().encode('<svg>'), 'image/png'), false);
-  assert.equal(imageDownloadName('demo-id', 'image/jpeg'), 'handout-demo-id.jpg');
+  assert.equal(fileMatches(Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10), 'image/png'), true);
+  assert.equal(fileMatches(Uint8Array.of(255, 216, 255), 'image/jpeg'), true);
+  assert.equal(fileMatches(new TextEncoder().encode('RIFF0000WEBPVP8 '), 'image/webp'), true);
+  assert.equal(fileMatches(new TextEncoder().encode('<svg>'), 'image/png'), false);
+  assert.equal(handoutDownloadName('demo-id', 'image/jpeg'), 'handout-demo-id.jpg');
 });
 
 test('player projection hides relationships to unpublished or direct archive records', () => {
@@ -43,4 +44,26 @@ test('player projection hides relationships to unpublished or direct archive rec
   assert.equal(playerCanSeeTarget('personnel', { status: 'draft', audience: 'cell' }), false);
   assert.equal(playerCanSeeTarget('handouts', { status: 'published' }), true);
   assert.equal(playerCanSeeTarget('handouts', { status: 'archived' }), false);
+});
+
+test('PDF viewer clamps page numbers and verifies the media signature', () => {
+  assert.equal(clampPage(0, 2), 1);
+  assert.equal(clampPage(1, 2), 1);
+  assert.equal(clampPage(3, 2), 2);
+  assert.equal(fileMatches(new TextEncoder().encode('%PDF-1.7'), 'application/pdf'), true);
+  assert.equal(fileMatches(new TextEncoder().encode('<html>'), 'application/pdf'), false);
+  assert.equal(handoutDownloadName('demo-pdf', 'application/pdf'), 'handout-demo-pdf.pdf');
+});
+
+test('file selection validates size, bytes and the declared MIME', async () => {
+  const png = Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10);
+  const result = await inspectHandoutFile(new File([png], 'local.png', { type: 'image/png' }));
+  assert.equal(result.name, 'local.png');
+  assert.equal(result.mime, 'image/png');
+  assert.deepEqual(result.bytes, png);
+  assert.equal((await inspectHandoutFile(new File(['%PDF-1.7'], 'sample.pdf'))).mime, 'application/pdf');
+  await assert.rejects(inspectHandoutFile(new File([png], 'wrong.pdf', { type: 'application/pdf' })), /firma/);
+  await assert.rejects(inspectHandoutFile(new File(['<svg>'], 'wrong.png', { type: 'image/png' })), /firma/);
+  await assert.rejects(inspectHandoutFile(new File([new Uint8Array(102401)], 'large.pdf')), /100 KiB/);
+  await assert.rejects(inspectHandoutFile(new File([], 'empty.pdf')), /100 KiB/);
 });

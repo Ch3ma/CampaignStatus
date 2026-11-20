@@ -1,5 +1,6 @@
 import { initializeTestEnvironment } from '@firebase/rules-unit-testing';
 import { demoImage } from './demo-image.mjs';
+import { demoPdf } from './demo-pdf.mjs';
 import { Bytes, doc, runTransaction, serverTimestamp } from 'firebase/firestore';
 
 const projectId = 'demo-black-archive';
@@ -36,6 +37,8 @@ try {
     const cell = 'cells/cell-a';
     const preview = demoImage();
     const handout = `${cell}/handouts/demo-telemetry`;
+    const pdf = await demoPdf();
+    const pdfHandout = `${cell}/handouts/demo-signal-pdf`;
     const packet = [
       [cell, { name: 'Cell A' }],
       [`${cell}/members/${handler}`, { role: 'handler', alias: 'Asmodan' }],
@@ -56,6 +59,23 @@ try {
         document: 'Cuaderno de prueba inventado', page: '3', section: 'Ensayo de campo',
         adaptationNotes: 'Telemetría simulada.', supportingPages: '3–4',
         references: [{ kind: 'personnel', targetId: 'demo-contact' }],
+      }],
+      [pdfHandout, {
+        title: 'Informe en dos páginas', category: 'PDF de demostración',
+        summary: 'Informe ficticio sobre la recepción y verificación de una señal.',
+        narrativeDate: 'Segundo turno', tags: 'Transmisión, Informe', classification: 'RESTRICTED',
+        alt: 'Dos páginas de texto describen una señal de prueba ficticia y su verificación.',
+        downloadAllowed: false, mime: 'application/pdf', byteLength: pdf.length,
+        status: 'draft', createdBy: handler, createdAt: serverTimestamp(),
+        publishedBy: '', publishedAt: null, updatedAt: serverTimestamp(),
+      }],
+      [`${pdfHandout}/files/preview`, { bytes: Bytes.fromUint8Array(pdf) }],
+      [`${pdfHandout}/relations/operation`, { kind: 'operations', targetId: 'demo-operation' }],
+      [`${pdfHandout}/relations/r1`, { kind: 'clues', targetId: 'demo-signal' }],
+      [`${pdfHandout}/private/provenance`, {
+        document: 'Guía de señales ficticia', page: '8', section: 'Lectura de control',
+        adaptationNotes: 'Informe generado por la semilla.', supportingPages: '8–9',
+        references: [{ kind: 'dossiers', targetId: 'demo-draft' }],
       }],
       [`${cell}/operations/demo-operation`, published(handler, {
         title: 'Operación Umbral', stage: 'En curso',
