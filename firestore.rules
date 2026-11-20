@@ -1,0 +1,86 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function memberPath(cellId) {
+      return /databases/$(database)/documents/cells/$(cellId)/members/$(request.auth.uid);
+    }
+
+    function hasRole(cellId, roles) {
+      return request.auth != null && get(memberPath(cellId)).data.role in roles;
+    }
+
+    function isHandler(cellId) {
+      return hasRole(cellId, ['handler']);
+    }
+
+    function isAgent(cellId) {
+      return hasRole(cellId, ['agent']);
+    }
+
+    function validRecord(collectionId) {
+      let data = request.resource.data;
+      let fields = ['title', 'category', 'summary', 'body', 'tags', 'connections', 'photo',
+        'status', 'audience', 'recipientUid', 'stage', 'publishedAt', 'publishedBy', 'updatedAt'];
+      return data.keys().hasAll(fields) && data.keys().hasOnly(fields)
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 120
+        && data.category is string && data.category.size() <= 60
+        && data.summary is string && data.summary.size() <= 500
+        && data.body is string && data.body.size() <= 24000
+        && data.tags is string && data.tags.size() <= 160
+        && data.connections is string && data.connections.size() <= 3000
+        && (collectionId == 'personnel' || data.connections == '')
+        && data.photo is string && data.photo.size() <= 180000
+        && (data.photo == '' || (collectionId == 'personnel'
+          && data.photo.matches('^data:image/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$')))
+        && data.stage is string && data.stage.size() <= 60
+        && (collectionId == 'operations' || data.stage == '')
+        && data.status in ['draft', 'review', 'published', 'archived']
+        && ((data.audience == 'cell' && data.recipientUid == '')
+          || (collectionId == 'messages' && data.audience == 'direct'
+            && data.recipientUid is string && data.recipientUid.size() > 0
+            && data.recipientUid.size() <= 128))
+        && data.updatedAt == request.time;
+    }
+
+    function validAudit(creating) {
+      let data = request.resource.data;
+      return data.status == 'published'
+        ? data.publishedAt == request.time && data.publishedBy == request.auth.uid
+        : (creating
+          ? data.publishedAt == null && data.publishedBy == ''
+          : data.publishedAt == resource.data.publishedAt
+            && data.publishedBy == resource.data.publishedBy);
+    }
+
+    match /cells/{cellId} {
+      allow get: if hasRole(cellId, ['handler', 'agent']);
+
+      match /members/{uid} {
+        allow get: if request.auth != null && request.auth.uid == uid;
+      }
+
+      match /handlerNotes/{noteId} {
+        allow read, write: if isHandler(cellId);
+      }
+
+      match /{collectionId}/{recordId} {
+        function supportedCollection() {
+          return collectionId in ['operations', 'dossiers', 'personnel', 'clues', 'messages'];
+        }
+
+        function agentCanRead() {
+          return isAgent(cellId) && resource.data.status == 'published'
+            && (resource.data.audience == 'cell'
+              || (collectionId == 'messages' && resource.data.audience == 'direct'
+                && resource.data.recipientUid == request.auth.uid));
+        }
+
+        allow read: if supportedCollection() && (isHandler(cellId) || agentCanRead());
+        allow create: if supportedCollection() && isHandler(cellId)
+          && validRecord(collectionId) && validAudit(true);
+        allow update: if supportedCollection() && isHandler(cellId)
+          && validRecord(collectionId) && validAudit(false);
+      }
+    }
+  }
+}
