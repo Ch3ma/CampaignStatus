@@ -34,3 +34,11 @@ La imagen y el PDF se generan en `scripts/demo-image.mjs` y `scripts/demo-pdf.mj
 La carga del Handler guarda la ficha, los bytes, la operación, los vínculos y la procedencia privada en un lote atómico de Firestore. Editar una publicación usa una transacción con comprobación de versión que la devuelve a revisión. Los binarios se almacenan una sola vez y las reglas del emulador exigen el mismo tamaño declarado en el borrador.
 
 `scripts/emulators.mjs` genera una configuración de reglas exclusiva del proyecto ficticio `demo-black-archive`. `firebase.json` conserva `firestore.rules` como configuración de producción y mantiene desactivadas las escrituras de archivos y referencias. El selector de archivos requiere además `VITE_USE_EMULATORS=true` con el servidor de desarrollo. Docker monta un volumen para exportar e importar Auth y Firestore. [Instalación de Emulator Suite](https://firebase.google.com/docs/emulator-suite/install_and_configure?hl=es)
+
+## Storage y GitHub Pages
+
+Las cargas nuevas reservan una revisión inmutable, una clave y su hash privado de origen en Firestore. El navegador cifra los bytes y transfiere el sobre del archivo con el SDK resumible. Confirma la revisión en una transacción después de la carga. Firestore y Storage aplican reglas coordinadas de membresía, publicación y revisión activa. Firestore no consulta Storage para verificar la existencia física del objeto. Si se interrumpe la confirmación, el Handler puede reintentar y verificar el objeto existente. Para descartar, primero se retira la revisión pendiente y se habilita únicamente la limpieza de esa revisión.
+
+El visor descarga con credenciales de Firebase, descifra temporalmente en memoria y revoca la URL del objeto al cerrarse. Los tokens que el propio servicio pueda emitir para la revisión sirven solo el sobre cifrado. La semilla conserva ejemplos inline. El uso de Storage en producción queda condicionado a configurar el bucket y la política de fuentes.
+
+La SPA de GitHub Pages usa el mismo backend de Auth y reglas y cambia al router hash para recargar rutas bajo el subdirectorio del proyecto. [Bucket privado](GCP_STORAGE_SETUP.md) · [GitHub Pages](GITHUB_PAGES.md)

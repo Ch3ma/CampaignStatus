@@ -4,6 +4,7 @@ import {
   relationLabels, visibleRelationSlots, type Handout, type HandoutFields, type Relation, type RelationFields,
 } from './model';
 import { inspectHandoutFile, type CheckedHandout } from './upload';
+import { uploadLimit } from './storage';
 import { HandoutViewer } from './view';
 
 export type ReferenceOption = Relation & { title: string; status: Status };
@@ -77,7 +78,7 @@ export function HandoutEditor({ handout, relations, options, save, busy }: {
     setChecking(Boolean(file));
     if (!file) return;
     try {
-      const checked = await inspectHandoutFile(file);
+      const checked = await inspectHandoutFile(file, uploadLimit);
       if (attempt.current !== revision) return;
       const blob = new Blob([checked.bytes], { type: checked.mime });
       setSelection({ file: checked, blob, revision });
@@ -118,7 +119,7 @@ export function HandoutEditor({ handout, relations, options, save, busy }: {
           <input type="file" accept=".png,.jpg,.jpeg,.webp,.pdf" required
             onChange={(event) => void select(event.target.files?.[0])} />
         </label>
-        <p className="hint">PNG, JPEG, WebP o PDF. Hasta 100 KiB por archivo.</p>
+        <p className="hint">PNG, JPEG, WebP o PDF. Hasta {uploadLimit / (1024 * 1024)} MiB por archivo.</p>
         {checking && <p role="status">Comprobando archivo…</p>}
         {fileError && <p className="error" role="alert">{fileError}</p>}
         {selection && <>
@@ -127,7 +128,7 @@ export function HandoutEditor({ handout, relations, options, save, busy }: {
             {preview ? 'Cerrar vista previa del archivo' : 'Previsualizar archivo seleccionado'}
           </button>
           {preview && <HandoutViewer key={selection.revision} localFile={selection.blob} player handout={{
-            id: 'local-preview', mime: selection.file.mime, byteLength: selection.file.bytes.length,
+            id: 'local-preview', cloud: null, mime: selection.file.mime, byteLength: selection.file.bytes.length,
             alt: 'Vista previa del archivo seleccionado', downloadAllowed: false,
           }} />}
         </>}

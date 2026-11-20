@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app';
+import { connectStorageEmulator, getStorage } from 'firebase/storage';
 import { connectAuthEmulator, initializeAuth, inMemoryPersistence } from 'firebase/auth';
 import {
   addDoc, collection, connectFirestoreEmulator, doc, getDocFromServer, initializeFirestore,
@@ -19,13 +20,16 @@ const config = isDemo ? { apiKey: 'demo-key', projectId: demoProject } : {
   appId: env.VITE_FIREBASE_APP_ID,
 };
 
-const app = Object.values(config).every(Boolean) ? initializeApp(config) : null;
+const bucket = isDemo ? `${demoProject}.appspot.com` : env.VITE_FIREBASE_STORAGE_BUCKET;
+const app = Object.values(config).every(Boolean) ? initializeApp({ ...config, storageBucket: bucket }) : null;
+export const storage = app && bucket ? getStorage(app) : null;
 export const auth = app ? initializeAuth(app, { persistence: inMemoryPersistence }) : null;
 const db = app ? initializeFirestore(app, { localCache: memoryLocalCache() }) : null;
 
 if (isDemo && auth && db) {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
   connectFirestoreEmulator(db, '127.0.0.1', 8080);
+  if (storage) connectStorageEmulator(storage, '127.0.0.1', 9199);
 }
 
 export function database() {

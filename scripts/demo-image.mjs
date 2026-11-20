@@ -1,3 +1,4 @@
+import { randomFillSync } from 'node:crypto';
 import { crc32, deflateSync } from 'node:zlib';
 
 function chunk(name, contents) {
@@ -10,9 +11,9 @@ function chunk(name, contents) {
 }
 
 // Fictional telemetry generated solely for the emulator demo.
-export function demoImage() {
-  const width = 640;
-  const height = 400;
+export function demoImage({ large = false } = {}) {
+  const width = large ? 980 : 640;
+  const height = large ? 780 : 400;
   const header = Buffer.alloc(13);
   header.writeUInt32BE(width);
   header.writeUInt32BE(height, 4);
@@ -21,6 +22,10 @@ export function demoImage() {
   const stride = width * 3 + 1;
   const pixels = Buffer.alloc(stride * height);
   for (let y = 0; y < height; y++) {
+    if (large) {
+      randomFillSync(pixels, y * stride + 1, width * 3);
+      continue;
+    }
     for (let x = 0; x < width; x++) {
       const dx = x - width / 2;
       const dy = y - height / 2;

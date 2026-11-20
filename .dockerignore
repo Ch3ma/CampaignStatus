@@ -11,6 +11,7 @@
 !eslint.config.js
 !firebase.json
 !firestore.rules
+!storage.rules
 !firestore.indexes.json
 !src/
 !src/**/

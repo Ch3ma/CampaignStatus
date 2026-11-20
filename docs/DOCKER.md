@@ -15,7 +15,7 @@ Cuando el registro indique que los emuladores están listos, presiona Ctrl+C par
 docker compose exec emulators npm run seed
 ```
 
-Abre http://127.0.0.1:5173 y elige la cuenta ficticia de Agente o Handler. La interfaz de Emulator Suite está en http://127.0.0.1:4000. Los servicios publicados están vinculados a loopback. Los contenedores usan el proyecto `demo-black-archive`. Compose conserva descargas y datos en volúmenes distintos. `docker compose down` da tiempo al emulador para exportar las cuentas, las fichas y sus archivos. El siguiente `docker compose up -d` con el mismo proyecto importa el estado. Un cierre abrupto puede perder cambios desde la última exportación. Conserva el volumen de datos para conservar los borradores.
+Abre http://127.0.0.1:5173 y elige la cuenta ficticia de Agente o Handler. La interfaz de Emulator Suite está en http://127.0.0.1:4000. Los servicios publicados están vinculados a loopback. Los contenedores usan el proyecto `demo-black-archive`. Compose conserva descargas y datos en volúmenes distintos. `docker compose down` da tiempo al emulador para exportar las cuentas, las fichas, sus archivos y los objetos de Storage. El siguiente `docker compose up -d` con el mismo proyecto importa el estado. Un cierre abrupto puede perder cambios desde la última exportación. Conserva el volumen de datos para conservar los borradores.
 
 ## Pruebas
 

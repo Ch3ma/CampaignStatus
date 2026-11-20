@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { initializeTestEnvironment } from '@firebase/rules-unit-testing';
 import { demoImage } from './demo-image.mjs';
 import { demoPdf } from './demo-pdf.mjs';
@@ -39,6 +40,9 @@ try {
     const handout = `${cell}/handouts/demo-telemetry`;
     const pdf = await demoPdf();
     const pdfHandout = `${cell}/handouts/demo-signal-pdf`;
+    const extra = (process.env.BLACK_ARCHIVE_RESERVED_SHA256 ?? '').split(',').map((item) => item.trim()).filter(Boolean);
+    if (extra.some((hash) => !/^[a-f0-9]{64}$/.test(hash))) throw new Error('Invalid reserved source hash.');
+    const testHash = createHash('sha256').update('%PDF-1.7 synthetic reserved source').digest('hex');
     const packet = [
       [cell, { name: 'Cell A' }],
       [`${cell}/members/${handler}`, { role: 'handler', alias: 'Asmodan' }],
@@ -121,7 +125,11 @@ try {
     ];
     await runTransaction(db, async (transaction) => {
       const refs = packet.map(([path]) => doc(db, path));
-      const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
+      const policy = doc(db, cell, 'handoutPolicy', 'sources');
+      const [existing, ...snapshots] = await Promise.all([policy, ...refs].map((ref) => transaction.get(ref)));
+      const previous = existing.data()?.blockedHashes ?? [];
+      const blockedHashes = [...new Set([...previous, testHash, ...extra])];
+      if (!existing.exists() || blockedHashes.length !== previous.length) transaction.set(policy, { blockedHashes });
       for (const [index, snapshot] of snapshots.entries()) {
         if (!snapshot.exists()) transaction.set(refs[index], packet[index][1]);
       }

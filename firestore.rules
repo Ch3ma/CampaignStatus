@@ -67,6 +67,10 @@ service cloud.firestore {
         return false; // Emulator handout writes
       }
 
+      match /handoutPolicy/{policyId} {
+        allow get: if policyId == 'sources' && isHandler(cellId);
+      }
+
       match /handouts/{handoutId} {
         function handoutPath() {
           return /databases/$(database)/documents/cells/$(cellId)/handouts/$(handoutId);
@@ -81,9 +85,82 @@ service cloud.firestore {
           return get(handoutPath()).data.status == 'published';
         }
 
-        function editableLocally() {
-          return localHandoutWrites() && isHandler(cellId)
-            && getAfter(handoutPath()).data.status in ['draft', 'review', 'archived'];
+        function editable() {
+          let parent = getAfter(handoutPath()).data;
+          return isHandler(cellId) && (localHandoutWrites() || 'cloud' in parent)
+            && parent.status in ['draft', 'review', 'archived'];
+        }
+
+        function emptyCloud() {
+          return {'active': '', 'pending': '', 'cleanup': ''};
+        }
+
+        function previousCloud() {
+          return resource.data.get('cloud', emptyCloud());
+        }
+
+        function nextCloud() {
+          return request.resource.data.get('cloud', emptyCloud());
+        }
+
+        function opaque(id) {
+          return id is string && id.matches('^[A-Za-z0-9]{20}$');
+        }
+
+        function optionalId(id) {
+          return id == '' || opaque(id);
+        }
+
+        function validCloud(data) {
+          return data is map && data.keys().hasOnly(['active', 'pending', 'cleanup'])
+            && optionalId(data.active) && optionalId(data.pending) && optionalId(data.cleanup)
+            && (data.pending == '' || data.cleanup == '');
+        }
+
+        function versionPath(id) {
+          return /databases/$(database)/documents/cells/$(cellId)/handouts/$(handoutId)/versions/$(id);
+        }
+
+        function keyPath(id) {
+          return /databases/$(database)/documents/cells/$(cellId)/handouts/$(handoutId)/keys/$(id);
+        }
+
+        function sourceAllowed(hash) {
+          let hashes = get(/databases/$(database)/documents/cells/$(cellId)/handoutPolicy/sources).data.blockedHashes;
+          return hashes is list && hashes.size() > 0 && !(hash in hashes);
+        }
+
+        function sameMedia() {
+          return request.resource.data.mime == resource.data.mime
+            && request.resource.data.byteLength == resource.data.byteLength;
+        }
+
+        function staged(id) {
+          let version = getAfter(versionPath(id)).data;
+          return version.status == 'pending' && existsAfter(keyPath(id));
+        }
+
+        function selected(version) {
+          return version.status == 'ready' && sourceAllowed(version.sourceHash)
+            && request.resource.data.mime == version.mime && request.resource.data.byteLength == version.byteLength;
+        }
+
+        function validCloudChange() {
+          let old = previousCloud();
+          let next = nextCloud();
+          return (next == old && sameMedia())
+            || ('cloud' in request.resource.data && request.resource.data.status != 'published' && (
+              (next.active == old.active && old.pending == '' && old.cleanup == ''
+                && opaque(next.pending) && next.cleanup == '' && sameMedia() && staged(next.pending))
+              || (next.active == old.active && opaque(old.pending) && next.pending == ''
+                && next.cleanup == old.pending && sameMedia()
+                && getAfter(versionPath(next.cleanup)).data.status == 'discarding')
+              || (next.active == old.active && opaque(old.cleanup) && next.pending == '' && next.cleanup == ''
+                && sameMedia() && getAfter(versionPath(old.cleanup)).data.status == 'discarded')
+              || (opaque(next.active) && next.active != old.active && next.pending == '' && next.cleanup == ''
+                && old.cleanup == '' && (old.pending == '' || next.active == old.pending)
+                && selected(getAfter(versionPath(next.active)).data))
+            ));
         }
 
         function validTargetId(id) {
@@ -121,7 +198,7 @@ service cloud.firestore {
           let fields = ['title', 'category', 'summary', 'narrativeDate', 'tags',
             'classification', 'alt', 'downloadAllowed', 'mime', 'byteLength',
             'status', 'createdAt', 'createdBy', 'publishedAt', 'publishedBy', 'updatedAt'];
-          return data.keys().hasAll(fields) && data.keys().hasOnly(fields)
+          return data.keys().hasAll(fields) && data.keys().hasOnly(fields.concat(['cloud']))
             && data.title is string && data.title.size() > 0 && data.title.size() <= 120
             && data.category is string && data.category.size() <= 60
             && data.summary is string && data.summary.size() <= 1000
@@ -130,31 +207,75 @@ service cloud.firestore {
             && data.classification is string && data.classification.size() > 0 && data.classification.size() <= 48
             && data.alt is string && data.alt.size() > 0 && data.alt.size() <= 240
             && data.downloadAllowed is bool && data.mime in ['image/png', 'image/jpeg', 'image/webp', 'application/pdf']
-            && data.byteLength is int && data.byteLength > 0 && data.byteLength <= 102400
+            && data.byteLength is int && data.byteLength > 0
+            && ('cloud' in data ? validCloud(data.cloud) && data.byteLength <= 33554432 : data.byteLength <= 102400)
             && data.status in ['draft', 'review', 'published', 'archived']
             && data.updatedAt == request.time;
         }
 
         function releasable() {
           let operation = get(/databases/$(database)/documents/cells/$(cellId)/handouts/$(handoutId)/relations/operation).data;
-          let file = get(/databases/$(database)/documents/cells/$(cellId)/handouts/$(handoutId)/files/preview).data;
+          let cloud = nextCloud();
           return operation.kind == 'operations' && visibleTarget('operations', operation.targetId)
-            && file.bytes is bytes && file.bytes.size() == request.resource.data.byteLength
+            && cloud.pending == '' && cloud.cleanup == ''
+            && (cloud.active == '' ? inlineReady() : selected(getAfter(versionPath(cloud.active)).data))
             && request.resource.data.diff(resource.data).affectedKeys()
               .hasOnly(['status', 'publishedAt', 'publishedBy', 'updatedAt']);
+        }
+
+        function inlineReady() {
+          let file = get(/databases/$(database)/documents/cells/$(cellId)/handouts/$(handoutId)/files/preview).data;
+          return file.bytes is bytes && file.bytes.size() == request.resource.data.byteLength;
         }
 
         allow read: if isHandler(cellId) || (isAgent(cellId) && resource.data.status == 'published');
         allow create: if isHandler(cellId) && validHandout() && validAudit(true)
           && request.resource.data.status == 'draft'
           && request.resource.data.createdBy == request.auth.uid
-          && request.resource.data.createdAt == request.time;
+          && request.resource.data.createdAt == request.time
+          && (!('cloud' in request.resource.data) || (opaque(handoutId) && nextCloud().active == ''
+            && nextCloud().cleanup == '' && opaque(nextCloud().pending) && staged(nextCloud().pending)));
         allow update: if isHandler(cellId) && validHandout() && validAudit(false)
           && request.resource.data.createdAt == resource.data.createdAt
           && request.resource.data.createdBy == resource.data.createdBy
-          && request.resource.data.mime == resource.data.mime
-          && request.resource.data.byteLength == resource.data.byteLength
+          && validCloudChange()
           && (request.resource.data.status != 'published' || releasable());
+
+        match /versions/{versionId} {
+          function validVersion(data) {
+            return data.keys().hasOnly(['mime', 'byteLength', 'sourceHash', 'status', 'createdAt'])
+              && data.mime in ['image/png', 'image/jpeg', 'image/webp', 'application/pdf']
+              && data.byteLength is int && data.byteLength > 0 && data.byteLength <= 33554432
+              && data.sourceHash is string && data.sourceHash.matches('^[a-f0-9]{64}$')
+              && sourceAllowed(data.sourceHash);
+          }
+
+          function allowedTransition() {
+            let before = get(handoutPath()).data.cloud;
+            let after = getAfter(handoutPath()).data.cloud;
+            let next = request.resource.data.status;
+            return (resource.data.status == 'pending' && before.pending == versionId && after.pending == ''
+              && ((next == 'ready' && after.active == versionId) || (next == 'discarding' && after.cleanup == versionId)))
+              || (resource.data.status == 'discarding' && before.cleanup == versionId && after.cleanup == ''
+                && next == 'discarded');
+          }
+
+          allow get, list: if isHandler(cellId);
+          allow create: if isHandler(cellId) && opaque(versionId) && validVersion(request.resource.data)
+            && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time
+            && getAfter(handoutPath()).data.cloud.pending == versionId;
+          allow update: if isHandler(cellId) && allowedTransition()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+        }
+
+        match /keys/{versionId} {
+          allow get: if isHandler(cellId) || (isAgent(cellId) && released()
+            && get(handoutPath()).data.cloud.active == versionId);
+          allow create: if isHandler(cellId) && opaque(versionId)
+            && getAfter(handoutPath()).data.cloud.pending == versionId
+            && request.resource.data.keys().hasOnly(['key']) && request.resource.data.key is string
+            && request.resource.data.key.matches('^[A-Za-z0-9+/]{43}=$');
+        }
 
         match /files/{fileId} {
           function validFile() {
@@ -167,13 +288,14 @@ service cloud.firestore {
           }
 
           allow get: if fileId == 'preview' && (isHandler(cellId) || (isAgent(cellId) && released()
+            && get(handoutPath()).data.get('cloud', emptyCloud()).active == ''
             && resource.data.keys().hasOnly(['bytes']) && resource.data.bytes is bytes));
           allow create: if fileId == 'preview' && localHandoutWrites() && isHandler(cellId) && validFile();
         }
 
         match /private/{entryId} {
           allow get: if entryId == 'provenance' && isHandler(cellId);
-          allow create, update: if entryId == 'provenance' && editableLocally()
+          allow create, update: if entryId == 'provenance' && editable()
             && validProvenance(request.resource.data);
         }
 
@@ -186,8 +308,8 @@ service cloud.firestore {
 
           allow get: if isHandler(cellId) || (isAgent(cellId) && released()
             && validSlot(resource.data) && visibleTarget(resource.data.kind, resource.data.targetId));
-          allow create, update: if editableLocally() && validSlot(request.resource.data);
-          allow delete: if editableLocally() && slot in ['r1', 'r2', 'r3', 'r4', 'r5', 'r6'];
+          allow create, update: if editable() && validSlot(request.resource.data);
+          allow delete: if editable() && slot in ['r1', 'r2', 'r3', 'r4', 'r5', 'r6'];
         }
       }
 

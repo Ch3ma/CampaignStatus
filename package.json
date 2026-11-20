@@ -14,8 +14,10 @@
     "emulators": "node scripts/emulators.mjs start",
     "seed": "node scripts/seed.mjs",
     "test": "tsc -p tsconfig.test.json && node .test-build/tests/app.test.js",
-    "test:rules": "node scripts/emulators.mjs exec 'node --test tests/firestore.test.mjs'",
-    "test:browser": "node --test tests/handout.browser.mjs"
+    "test:rules": "node scripts/emulators.mjs exec 'node --test --test-concurrency=1 tests/firestore.test.mjs tests/storage.test.mjs'",
+    "test:browser": "node --test tests/handout.browser.mjs",
+    "build:pages": "tsc --noEmit && vite build --mode pages && node scripts/check-pages.mjs",
+    "test:pages": "node --test tests/pages.browser.mjs"
   },
   "dependencies": {
     "firebase": "^12.4.0",

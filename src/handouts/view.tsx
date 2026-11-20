@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { splitTags } from '../domain';
-import { isDemo } from '../firebase';
+import { isDemo, storage } from '../firebase';
 import { clampZoom, handoutDownloadName, relationLabels, relationRoutes, type Handout, type LinkedRecord } from './model';
 import { getHandoutFile, watchHandouts, watchRelations } from './repository';
 
@@ -15,27 +15,28 @@ export function useHandouts(handling: boolean) {
 }
 
 export function HandoutViewer({ handout, player, localFile }: {
-  handout: Pick<Handout, 'id' | 'mime' | 'byteLength' | 'alt' | 'downloadAllowed'>;
+  handout: Pick<Handout, 'id' | 'mime' | 'byteLength' | 'alt' | 'downloadAllowed' | 'cloud'>;
   player: boolean;
   localFile?: Blob;
 }) {
-  const { id, mime, byteLength } = handout;
+  const { id, mime, byteLength, cloud } = handout;
+  const available = Boolean(localFile || (cloud?.active ? storage : isDemo));
   const [media, setMedia] = useState<{ file: Blob; url: string } | 'error' | null>(null);
   const [zoom, setZoom] = useState(100);
   useEffect(() => {
-    if (!isDemo) return;
+    if (!available) return;
     let active = true;
     let objectUrl: string | undefined;
-    const source = localFile ? Promise.resolve(localFile) : getHandoutFile({ id, mime, byteLength });
+    const source = localFile ? Promise.resolve(localFile) : getHandoutFile({ id, mime, byteLength, cloud });
     void source.then((file) => {
       if (!active) return;
       objectUrl = URL.createObjectURL(file);
       setMedia({ file, url: objectUrl });
     }).catch(() => { if (active) setMedia('error'); });
     return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [id, mime, byteLength, localFile]);
+  }, [id, mime, byteLength, cloud, localFile, available]);
 
-  if (!isDemo) return <p role="status">El visor de demostración está disponible en los emuladores.</p>;
+  if (!available) return <p role="status">El archivo multimedia no está disponible en este entorno.</p>;
   if (media === 'error') return <p role="alert">El archivo no está disponible.</p>;
   if (!media) return <p role="status">Cargando archivo…</p>;
   const pdf = mime === 'application/pdf';
@@ -80,7 +81,7 @@ export function HandoutView({ handout, player }: { handout: Handout; player: boo
       <div className="tags">{splitTags(handout.tags).map((tag) => <span key={tag}>{tag}</span>)}</div>
       {links.length > 0 && <section aria-label="Referencias reveladas"><h2>Referencias reveladas</h2><RelationList records={links} /></section>}
     </article>
-    <HandoutViewer handout={handout} player={player} />
+    <HandoutViewer key={handout.cloud?.active ?? 'inline'} handout={handout} player={player} />
   </>;
 }
 

@@ -1,11 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { statusLabels } from '../domain';
-import { isDemo, RecordChangedError } from '../firebase';
+import { isDemo, RecordChangedError, storage } from '../firebase';
 import { useRecords } from '../archive';
 import { HandoutEditor, type ReferenceOption } from './editor';
-import type { CheckedHandout } from './upload';
-import { emptyRelations, type Handout, type HandoutFields, type RelationFields } from './model';
-import { createHandout, getProvenance, getRelationsForEdit, updateHandout } from './repository';
+import { inspectHandoutFile, type CheckedHandout } from './upload';
+import { uploadLimit } from './storage';
+import { emptyRelations, type Handout, type HandoutFields, type RelationFields, type CloudVersion } from './model';
+import {
+  completeUpload, createHandout, discardUpload, getProvenance, getReadyVersions,
+  getRelationsForEdit, restoreVersion, stageReplacement, updateHandout,
+} from './repository';
 import { HandoutView, RelationList, useHandouts } from './view';
 
 function PrivateProvenance({ id }: { id: string }) {
@@ -31,19 +35,59 @@ function PrivateProvenance({ id }: { id: string }) {
   </section>;
 }
 
-function ManageItem({ handout, uid, options }: { handout: Handout; uid: string; options: ReferenceOption[] }) {
+type Transfer = { busy: boolean; percent: number; error: string };
+type FileActions = {
+  upload: (handout: Handout, file: File) => void;
+  discard: (handout: Handout) => void;
+  restore: (handout: Handout, version: CloudVersion) => void;
+};
+
+function FileControls({ handout, busy, actions }: { handout: Handout; busy: boolean; actions: FileActions }) {
+  const [versions, setVersions] = useState<Awaited<ReturnType<typeof getReadyVersions>> | 'error'>();
+  const cloud = handout.cloud;
+  useEffect(() => {
+    if (!cloud) return;
+    let active = true;
+    void getReadyVersions(handout.id).then((entries) => { if (active) setVersions(entries); })
+      .catch(() => { if (active) setVersions('error'); });
+    return () => { active = false; };
+  }, [handout.id, cloud]);
+  return <section className="panel handout-panel" aria-label="Archivo y versiones">
+    <h2>Archivo y versiones</h2>
+    {!cloud?.cleanup && <label>{cloud?.pending ? 'Reintentar con el mismo archivo' : 'Seleccionar archivo de reemplazo'}
+      <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" disabled={busy} onChange={(event) => {
+        const file = event.target.files?.[0];
+        if (file) actions.upload(handout, file);
+        event.target.value = '';
+      }} />
+    </label>}
+    {(cloud?.pending || cloud?.cleanup) && <button type="button" disabled={busy} onClick={() => actions.discard(handout)}>
+      {cloud.cleanup ? 'Reintentar limpieza' : 'Descartar carga pendiente'}
+    </button>}
+    {versions === 'error' ? <p role="alert">No se pudo consultar el historial.</p>
+      : versions?.filter((version) => version.id !== cloud?.active).map((version) => <button type="button" key={version.id}
+        disabled={busy || Boolean(cloud?.pending || cloud?.cleanup)} onClick={() => actions.restore(handout, version)}>
+        Restaurar {new Date(version.createdAt).toLocaleString('es-MX')} · {version.mime} · {version.id.slice(0, 6)}
+      </button>)}
+  </section>;
+}
+
+function ManageItem({ handout, uid, options, transfer, actions }: {
+  handout: Handout; uid: string; options: ReferenceOption[]; transfer: Transfer; actions: FileActions;
+}) {
   const [mode, setMode] = useState<'handler' | 'agent'>('handler');
   const [busy, setBusy] = useState(false);
   const [approved, setApproved] = useState(false);
   const [error, setError] = useState('');
+  const canEditRelations = isDemo || Boolean(handout.cloud);
   const [relations, setRelations] = useState<RelationFields | 'error'>();
   useEffect(() => {
-    if (!isDemo) return;
+    if (!canEditRelations) return;
     let active = true;
     void getRelationsForEdit(handout.id).then((data) => { if (active) setRelations(data); })
       .catch(() => { if (active) setRelations('error'); });
     return () => { active = false; };
-  }, [handout.id]);
+  }, [handout.id, canEditRelations]);
 
   async function update(fields: Parameters<typeof updateHandout>[1], edges?: RelationFields) {
     setBusy(true);
@@ -69,11 +113,11 @@ function ManageItem({ handout, uid, options }: { handout: Handout; uid: string; 
         Confirmo que esta copia puede publicarse para Cell A.
       </label>}
       <div className="image-tools">
-        {handout.status !== 'published' && <button type="button" className="primary" disabled={!approved || busy}
+        {handout.status !== 'published' && <button type="button" className="primary" disabled={!approved || busy || transfer.busy || Boolean(handout.cloud?.pending || handout.cloud?.cleanup)}
           onClick={() => void update('published')}>Publicar handout</button>}
-        {handout.status !== 'archived' && <button type="button" disabled={busy}
+        {handout.status !== 'archived' && <button type="button" disabled={busy || transfer.busy}
           onClick={() => void update('archived')}>Archivar handout</button>}
-        {handout.status === 'archived' && <button type="button" disabled={busy}
+        {handout.status === 'archived' && <button type="button" disabled={busy || transfer.busy}
           onClick={() => void update('draft')}>Reabrir borrador</button>}
       </div>
       {error && <p className="error" role="alert">{error}</p>}
@@ -81,10 +125,11 @@ function ManageItem({ handout, uid, options }: { handout: Handout; uid: string; 
     {mode === 'agent' && <p className="hint">Simulación de los datos visibles después de publicar.</p>}
     <HandoutView key={mode} handout={handout} player={mode === 'agent'} />
     {mode === 'handler' && <>
+      {storage && <FileControls handout={handout} busy={busy || transfer.busy} actions={actions} />}
       <PrivateProvenance id={handout.id} />
       {relations === 'error' ? <p role="alert">No se pudieron consultar las referencias para editar.</p>
-        : isDemo && !relations ? <p role="status">Cargando referencias…</p>
-          : <HandoutEditor handout={handout} busy={busy} options={options} relations={relations}
+        : canEditRelations && !relations ? <p role="status">Cargando referencias…</p>
+          : <HandoutEditor handout={handout} busy={busy || transfer.busy} options={options} relations={relations}
             save={(values, edges) => void update(values, edges)} />}
     </>}
   </div>;
@@ -107,42 +152,72 @@ export function ManageHandouts({ uid }: { uid: string }) {
   const { records, error } = useHandouts(true);
   const [selected, setSelected] = useState('');
   const [creating, setCreating] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [createError, setCreateError] = useState('');
+  const [transfer, setTransfer] = useState<Transfer>({ busy: false, percent: 0, error: '' });
+  const controller = useRef<AbortController | null>(null);
   const options = useReferenceOptions(uid, records ?? []);
   const handout = records?.find((item) => item.id === selected);
+  useEffect(() => () => controller.current?.abort(), []);
 
-  async function save(fields: HandoutFields, relations?: RelationFields, file?: CheckedHandout) {
-    if (!relations || !file) return;
-    setBusy(true);
-    setCreateError('');
-    try {
-      setSelected(await createHandout(fields, relations, file, uid));
-      setCreating(false);
-    } catch {
-      setCreateError('No se pudo guardar el borrador. Revisa la ficha, la operación y la conexión al emulador.');
+  async function run(action: (signal: AbortSignal) => Promise<void>) {
+    if (controller.current) return;
+    const task = new AbortController();
+    controller.current = task;
+    setTransfer({ busy: true, percent: 0, error: '' });
+    try { await action(task.signal); }
+    catch (error) {
+      const detail = error instanceof Error && !('code' in error) && error.message ? error.message
+        : 'No se pudo completar la operación. Una carga pendiente puede reintentarse o descartarse.';
+      setTransfer((state) => ({ ...state, error: task.signal.aborted ? 'Carga cancelada. Puedes reintentar con el mismo archivo.' : detail }));
     } finally {
-      setBusy(false);
+      controller.current = null;
+      setTransfer((state) => ({ ...state, busy: false }));
     }
+  }
+
+  const track = (percent: number) => setTransfer((state) => ({ ...state, percent }));
+  const actions: FileActions = {
+    upload: (current, file) => void run(async (signal) => {
+      const selected = await inspectHandoutFile(file, uploadLimit);
+      signal.throwIfAborted();
+      const revision = current.cloud?.pending || await stageReplacement(current, selected);
+      await completeUpload(current.id, revision, selected, signal, track);
+    }),
+    discard: (current) => void run(() => discardUpload(current)),
+    restore: (current, version) => void run(() => restoreVersion(current, version)),
+  };
+  function save(fields: HandoutFields, relations?: RelationFields, file?: CheckedHandout) {
+    if (!relations || !file) return;
+    void run(async (signal) => {
+      const created = await createHandout(fields, relations, file, uid);
+      setSelected(created.id);
+      setCreating(false);
+      await completeUpload(created.id, created.revision, file, signal, track);
+    });
   }
 
   return <div className="manage-grid">
     <section className="panel">
       <div className="section-heading"><h2>Handouts</h2></div>
-      {isDemo && <button type="button" className="new-record" disabled={busy}
-        onClick={() => { setSelected(''); setCreateError(''); setCreating(true); }}>Nuevo handout</button>}
+      {storage && <button type="button" className="new-record" disabled={transfer.busy}
+        onClick={() => { setSelected(''); setCreating(true); }}>Nuevo handout</button>}
       {error ? <p className="notice error" role="alert">No se pudo consultar el archivo.</p>
         : !records ? <p className="notice" role="status">Cargando handouts…</p>
           : records.length === 0 ? <p className="notice" role="status">Todavía no hay handouts.</p>
             : records.map((item) => <button type="button" key={item.id} className="manage-row" aria-pressed={selected === item.id}
-              disabled={busy} onClick={() => { setCreating(false); setSelected(item.id); }}>
+              disabled={transfer.busy} onClick={() => { setCreating(false); setSelected(item.id); }}>
               <strong>{item.title}</strong><span>{statusLabels[item.status]}</span></button>)}
     </section>
-    {creating && isDemo && <section>
-      {createError && <p className="error" role="alert">{createError}</p>}
-      <HandoutEditor busy={busy} options={options} relations={emptyRelations}
+    {creating && storage && <section>
+      <HandoutEditor busy={transfer.busy} options={options} relations={emptyRelations}
         save={(fields, edges, file) => void save(fields, edges, file)} />
     </section>}
-    {handout && <ManageItem key={`${handout.id}/${handout.version}`} handout={handout} uid={uid} options={options} />}
+    {(transfer.busy || transfer.error) && <div className="panel handout-panel">
+      {transfer.error && <p className="error" role="alert">{transfer.error}</p>}
+      {transfer.busy && <>
+        <progress aria-label="Progreso de almacenamiento" value={transfer.percent} max={100} />
+        <button type="button" onClick={() => controller.current?.abort()}>Cancelar carga</button>
+      </>}
+    </div>}
+    {handout && <ManageItem key={`${handout.id}/${handout.version}`} handout={handout} uid={uid} options={options} transfer={transfer} actions={actions} />}
   </div>;
 }

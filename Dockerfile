@@ -3,7 +3,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY index.html vite.config.ts tsconfig.json tsconfig.test.json eslint.config.js ./
-COPY firebase.json firestore.rules firestore.indexes.json ./
+COPY firebase.json firestore.rules storage.rules firestore.indexes.json ./
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY tests/ ./tests/
@@ -27,6 +27,8 @@ ARG PUBLIC_FIREBASE_WEB_KEY
 ARG PUBLIC_FIREBASE_DOMAIN
 ARG VITE_FIREBASE_PROJECT_ID
 ARG VITE_FIREBASE_APP_ID
+ARG VITE_FIREBASE_STORAGE_BUCKET
+ARG VITE_HANDOUT_MAX_MIB
 RUN VITE_FIREBASE_API_KEY="$PUBLIC_FIREBASE_WEB_KEY" VITE_FIREBASE_AUTH_DOMAIN="$PUBLIC_FIREBASE_DOMAIN" npm run build
 
 FROM nginxinc/nginx-unprivileged:1.28-alpine AS runtime
