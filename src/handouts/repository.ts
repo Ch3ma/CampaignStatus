@@ -5,7 +5,7 @@ import {
 import { cellId } from '../domain';
 import { database, isDemo, recordVersion, RecordChangedError } from '../firebase';
 import {
-  imageMatches, playerCanSeeTarget, relationKinds, relationSlots,
+  fileMatches, playerCanSeeTarget, relationKinds, relationSlots,
   type Handout, type HandoutFields, type LinkedRecord, type Provenance, type Relation,
 } from './model';
 
@@ -31,14 +31,14 @@ export function watchHandouts(handling: boolean, ready: (records: Handout[] | nu
   }, fail);
 }
 
-export async function getImage(handout: Pick<Handout, 'id' | 'mime' | 'byteLength'>) {
+export async function getHandoutFile(handout: Pick<Handout, 'id' | 'mime' | 'byteLength'>) {
   if (!isDemo) throw new Error('El visor de prueba requiere emuladores.');
   const snapshot = await getDocFromServer(doc(recordRef(handout.id), 'files', 'preview'));
   const stored: unknown = snapshot.data()?.bytes;
-  if (!(stored instanceof Bytes)) throw new Error('La imagen no está disponible.');
+  if (!(stored instanceof Bytes)) throw new Error('El archivo no está disponible.');
   const bytes = new Uint8Array(stored.toUint8Array());
-  if (bytes.length !== handout.byteLength || !imageMatches(bytes, handout.mime)) {
-    throw new Error('La imagen no coincide con su ficha.');
+  if (bytes.length !== handout.byteLength || !fileMatches(bytes, handout.mime)) {
+    throw new Error('El archivo no coincide con su ficha.');
   }
   return new Blob([bytes], { type: handout.mime });
 }

@@ -74,3 +74,67 @@ test('agent receives only the published image and the visible reference', { time
     await browser.close();
   }
 });
+
+test('PDF pages, zoom, text and authorized download work on mobile', { timeout: 90000 }, async () => {
+  const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined });
+  try {
+    const handler = await browser.newPage();
+    const agent = await browser.newPage({ viewport: { width: 390, height: 844 }, acceptDownloads: true });
+    await handler.goto(`${origin}/handler`);
+    await handler.getByRole('button', { name: 'Entrar como Handler' }).click();
+    await handler.getByRole('button', { name: 'Handouts', exact: true }).click();
+    await handler.getByRole('button', { name: /Informe en dos páginas/ }).click();
+    await handler.getByRole('img', { name: 'Página 1 del PDF' }).waitFor();
+    await handler.getByText('Guía de señales ficticia').waitFor();
+    await handler.getByRole('button', { name: 'Vista previa como agente' }).click();
+    await handler.getByRole('img', { name: 'Página 1 del PDF' }).waitFor();
+    assert.equal(await handler.getByText('Guía de señales ficticia').count(), 0);
+    assert.equal(await handler.getByRole('link', { name: 'Descargar PDF' }).count(), 0);
+    assert.equal(await handler.getByRole('button', { name: 'Imprimir página actual' }).count(), 0);
+
+    await agent.goto(`${origin}/handouts/demo-signal-pdf`);
+    await agent.getByRole('button', { name: 'Entrar como agente' }).click();
+    await agent.getByText('Handout no disponible.').waitFor();
+
+    await handler.getByRole('checkbox', { name: /Confirmo que esta copia/ }).check();
+    await handler.getByRole('button', { name: 'Publicar handout' }).click();
+    await agent.getByRole('img', { name: 'Página 1 del PDF' }).waitFor();
+    assert.equal(await agent.getByRole('link', { name: 'Descargar PDF' }).count(), 0);
+    assert.equal(await agent.getByRole('button', { name: 'Imprimir página actual' }).count(), 0);
+    await agent.getByRole('link', { name: 'Evidencia · Marca de recepción' }).waitFor();
+    assert.equal(await agent.getByText('Guía de señales ficticia').count(), 0);
+    assert.equal(await agent.getByRole('button', { name: 'Página anterior' }).isDisabled(), true);
+    await agent.getByRole('button', { name: 'Página siguiente' }).click();
+    const second = agent.getByRole('img', { name: 'Página 2 del PDF' });
+    await second.waitFor();
+    assert.equal(await agent.getByRole('button', { name: 'Página siguiente' }).isDisabled(), true);
+    await agent.getByRole('button', { name: 'Acercar' }).click();
+    assert.equal(await second.evaluate((item) => item.style.width), '125%');
+    assert.equal(await agent.evaluate(() => document.documentElement.scrollWidth), 390);
+    await agent.getByText('Texto de esta página').click();
+    await agent.getByText(/El segundo turno repitió la medición/).waitFor();
+
+    await handler.getByRole('checkbox', { name: 'Permitir descargar desde el visor' }).check();
+    await handler.getByRole('button', { name: 'Guardar ficha' }).click();
+    await agent.getByText('Handout no disponible.').waitFor();
+    await handler.getByRole('checkbox', { name: /Confirmo que esta copia/ }).check();
+    await handler.getByRole('button', { name: 'Publicar handout' }).click();
+    await agent.getByRole('button', { name: 'Imprimir página actual' }).waitFor();
+    const [download] = await Promise.all([
+      agent.waitForEvent('download'),
+      agent.getByRole('link', { name: 'Descargar PDF' }).click(),
+    ]);
+    assert.equal(download.suggestedFilename(), 'handout-demo-signal-pdf.pdf');
+    await agent.emulateMedia({ media: 'print' });
+    await agent.getByRole('img', { name: 'Página 1 del PDF' }).waitFor();
+    assert.equal(await agent.getByRole('button', { name: 'Página siguiente' }).count(), 0);
+    await agent.emulateMedia({ media: 'screen' });
+    await handler.getByRole('button', { name: 'Archivar handout' }).click();
+    await agent.getByText('Handout no disponible.').waitFor();
+    await handler.getByRole('button', { name: 'Reabrir borrador' }).click();
+    await handler.getByRole('checkbox', { name: 'Permitir descargar desde el visor' }).uncheck();
+    await handler.getByRole('button', { name: 'Guardar ficha' }).click();
+  } finally {
+    await browser.close();
+  }
+});

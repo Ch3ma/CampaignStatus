@@ -71,7 +71,7 @@ function ManageItem({ handout, uid }: { handout: Handout; uid: string }) {
     catch (failure) {
       setError(failure instanceof RecordChangedError
         ? 'El handout cambió en otra sesión. Reabre la ficha para continuar.'
-        : 'No se pudo guardar. Verifica la ficha, la imagen y la operación asociada.');
+        : 'No se pudo guardar. Verifica la ficha, el archivo y la operación asociada.');
     } finally { setBusy(false); }
   }
 

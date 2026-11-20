@@ -200,3 +200,15 @@ h2 { font-size: 1.2rem; letter-spacing: -.025em; }
 .image-tools output { font-family: var(--mono); }
 .image-scroll { margin-top: .65rem; min-width: 0; max-height: 70vh; overflow: auto; background: var(--background); }
 .image-scroll img { display: block; max-width: none; height: auto; }
+
+.image-scroll canvas { max-width: none; height: auto; vertical-align: middle; }
+.pdf-description, .pdf-controls, .pdf-text { margin-top: .65rem; }
+.pdf-text summary { cursor: pointer; }
+.pdf-text p { margin-bottom: 0; overflow-wrap: anywhere; }
+
+@media print {
+  .handout-nav, .image-viewer, .image-tools, .pdf-text, .pdf-description { display: none; }
+  .print-handout { display: block; padding: 0; background: white; border: 0; }
+  .print-handout .image-scroll { max-height: none; overflow: visible; background: white; }
+  .print-handout canvas { width: 100% !important; height: auto; break-inside: avoid; }
+}

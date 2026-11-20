@@ -90,7 +90,7 @@ service cloud.firestore {
             && data.tags is string && data.tags.size() <= 160
             && data.classification is string && data.classification.size() > 0 && data.classification.size() <= 48
             && data.alt is string && data.alt.size() > 0 && data.alt.size() <= 240
-            && data.downloadAllowed is bool && data.mime in ['image/png', 'image/jpeg', 'image/webp']
+            && data.downloadAllowed is bool && data.mime in ['image/png', 'image/jpeg', 'image/webp', 'application/pdf']
             && data.byteLength is int && data.byteLength > 0 && data.byteLength <= 102400
             && data.status in ['draft', 'review', 'published', 'archived']
             && data.updatedAt == request.time;

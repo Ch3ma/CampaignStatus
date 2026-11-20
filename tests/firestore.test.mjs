@@ -10,6 +10,7 @@ import {
 } from 'firebase/firestore';
 
 import { demoImage } from '../scripts/demo-image.mjs';
+import { demoPdf } from '../scripts/demo-pdf.mjs';
 
 const projectId = 'demo-black-archive';
 const cell = 'cells/cell-a';
@@ -210,4 +211,38 @@ test('handout bytes, provenance and links respect publication and target permiss
   await assertSucceeds(updateDoc(doc(handler, path), { status: 'archived', updatedAt: serverTimestamp() }));
   await assertFails(read(agent, 'files', 'preview'));
   await assertFails(read(agent, 'relations', 'operation'));
+});
+
+test('PDF uses the same server-validated release and protected byte path', async () => {
+  const handler = env.authenticatedContext('handler').firestore();
+  const agent = env.authenticatedContext('agent').firestore();
+  const path = `${cell}/handouts/demo-pdf`;
+  const pdf = await demoPdf();
+  const recordRef = doc(handler, path);
+  const fileRef = doc(agent, path, 'files', 'preview');
+  const metadata = {
+    title: 'PDF ficticio', category: 'Prueba', summary: '', narrativeDate: '', tags: '',
+    classification: 'RESTRICTED', alt: 'Dos páginas ficticias', downloadAllowed: false,
+    mime: 'application/pdf', byteLength: pdf.length, status: 'draft',
+    createdAt: serverTimestamp(), createdBy: 'handler', publishedAt: null, publishedBy: '',
+    updatedAt: serverTimestamp(),
+  };
+  await assertFails(setDoc(recordRef, { ...metadata, mime: 'application/zip' }));
+  await assertFails(setDoc(recordRef, { ...metadata, byteLength: 102401 }));
+  await assertSucceeds(setDoc(recordRef, metadata));
+  await env.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await Promise.all([
+      setDoc(doc(db, cell, 'operations', 'pdf-operation'), record()),
+      setDoc(doc(db, path, 'files', 'preview'), { bytes: Bytes.fromUint8Array(pdf) }),
+      setDoc(doc(db, path, 'relations', 'operation'), { kind: 'operations', targetId: 'pdf-operation' }),
+    ]);
+  });
+  await assertFails(getDocFromServer(fileRef));
+  await assertSucceeds(updateDoc(recordRef, {
+    status: 'published', publishedAt: serverTimestamp(), publishedBy: 'handler', updatedAt: serverTimestamp(),
+  }));
+  assert.deepEqual((await assertSucceeds(getDocFromServer(fileRef))).data().bytes.toUint8Array(), pdf);
+  await assertSucceeds(updateDoc(recordRef, { status: 'archived', updatedAt: serverTimestamp() }));
+  await assertFails(getDocFromServer(fileRef));
 });
