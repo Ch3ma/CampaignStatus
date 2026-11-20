@@ -1,8 +1,11 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import { statusLabels } from '../domain';
-import { RecordChangedError } from '../firebase';
-import type { Handout, HandoutFields } from './model';
-import { getProvenance, updateHandout } from './repository';
+import { isDemo, RecordChangedError } from '../firebase';
+import { useRecords } from '../archive';
+import { HandoutEditor, type ReferenceOption } from './editor';
+import type { CheckedHandout } from './upload';
+import { emptyRelations, type Handout, type HandoutFields, type RelationFields } from './model';
+import { createHandout, getProvenance, getRelationsForEdit, updateHandout } from './repository';
 import { HandoutView, RelationList, useHandouts } from './view';
 
 function PrivateProvenance({ id }: { id: string }) {
@@ -28,46 +31,24 @@ function PrivateProvenance({ id }: { id: string }) {
   </section>;
 }
 
-const fields = [
-  ['title', 'Título', 120, true], ['category', 'Categoría', 60, false],
-  ['narrativeDate', 'Fecha narrativa', 80, false], ['tags', 'Etiquetas', 160, false],
-  ['classification', 'Clasificación', 48, true], ['alt', 'Texto alternativo', 240, true],
-] as const;
-
-function HandoutEditor({ handout, save, busy }: { handout: Handout; save: (fields: HandoutFields) => void; busy: boolean }) {
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const read = (name: string) => String(data.get(name) ?? '').trim();
-    save({
-      title: read('title'), category: read('category'), summary: read('summary'), tags: read('tags'),
-      classification: read('classification'), alt: read('alt'), narrativeDate: read('narrativeDate'),
-      downloadAllowed: data.has('downloadAllowed'),
-    });
-  }
-  return <form className="editor" onSubmit={submit}>
-    <fieldset disabled={busy}>
-      <legend>Editar ficha</legend>
-      <div className="edit-pair">{fields.map(([name, label, size, required]) =>
-        <label key={name}>{label}<input name={name} defaultValue={handout[name]} maxLength={size} required={required} /></label>)}</div>
-      <label>Resumen<textarea name="summary" rows={3} maxLength={1000} defaultValue={handout.summary} /></label>
-      <label className="checkbox"><input name="downloadAllowed" type="checkbox" defaultChecked={handout.downloadAllowed} /> Permitir descargar desde el visor</label>
-      {handout.status === 'published' && <p className="hint">Guardar cambios devuelve la ficha a revisión.</p>}
-      <button className="primary">Guardar ficha</button>
-    </fieldset>
-  </form>;
-}
-
-function ManageItem({ handout, uid }: { handout: Handout; uid: string }) {
+function ManageItem({ handout, uid, options }: { handout: Handout; uid: string; options: ReferenceOption[] }) {
   const [mode, setMode] = useState<'handler' | 'agent'>('handler');
   const [busy, setBusy] = useState(false);
   const [approved, setApproved] = useState(false);
   const [error, setError] = useState('');
+  const [relations, setRelations] = useState<RelationFields | 'error'>();
+  useEffect(() => {
+    if (!isDemo) return;
+    let active = true;
+    void getRelationsForEdit(handout.id).then((data) => { if (active) setRelations(data); })
+      .catch(() => { if (active) setRelations('error'); });
+    return () => { active = false; };
+  }, [handout.id]);
 
-  async function update(fields: Parameters<typeof updateHandout>[1]) {
+  async function update(fields: Parameters<typeof updateHandout>[1], edges?: RelationFields) {
     setBusy(true);
     setError('');
-    try { await updateHandout(handout, fields, uid); }
+    try { await updateHandout(handout, fields, uid, edges); }
     catch (failure) {
       setError(failure instanceof RecordChangedError
         ? 'El handout cambió en otra sesión. Reabre la ficha para continuar.'
@@ -101,24 +82,67 @@ function ManageItem({ handout, uid }: { handout: Handout; uid: string }) {
     <HandoutView key={mode} handout={handout} player={mode === 'agent'} />
     {mode === 'handler' && <>
       <PrivateProvenance id={handout.id} />
-      <HandoutEditor handout={handout} busy={busy} save={(values) => void update(values)} />
+      {relations === 'error' ? <p role="alert">No se pudieron consultar las referencias para editar.</p>
+        : isDemo && !relations ? <p role="status">Cargando referencias…</p>
+          : <HandoutEditor handout={handout} busy={busy} options={options} relations={relations}
+            save={(values, edges) => void update(values, edges)} />}
     </>}
   </div>;
+}
+
+function useReferenceOptions(uid: string, handouts: Handout[]) {
+  const session = { uid, role: 'handler' } as const;
+  const operations = useRecords('operations', session, 'management');
+  const dossiers = useRecords('dossiers', session, 'management');
+  const personnel = useRecords('personnel', session, 'management');
+  const clues = useRecords('clues', session, 'management');
+  const groups = [
+    ['operations', operations.records], ['dossiers', dossiers.records], ['personnel', personnel.records],
+    ['clues', clues.records], ['handouts', handouts],
+  ] as const;
+  return groups.flatMap(([kind, records]) => records?.map(({ id, title, status }) => ({ kind, targetId: id, title, status })) ?? []);
 }
 
 export function ManageHandouts({ uid }: { uid: string }) {
   const { records, error } = useHandouts(true);
   const [selected, setSelected] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const options = useReferenceOptions(uid, records ?? []);
   const handout = records?.find((item) => item.id === selected);
+
+  async function save(fields: HandoutFields, relations?: RelationFields, file?: CheckedHandout) {
+    if (!relations || !file) return;
+    setBusy(true);
+    setCreateError('');
+    try {
+      setSelected(await createHandout(fields, relations, file, uid));
+      setCreating(false);
+    } catch {
+      setCreateError('No se pudo guardar el borrador. Revisa la ficha, la operación y la conexión al emulador.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return <div className="manage-grid">
     <section className="panel">
       <div className="section-heading"><h2>Handouts</h2></div>
+      {isDemo && <button type="button" className="new-record" disabled={busy}
+        onClick={() => { setSelected(''); setCreateError(''); setCreating(true); }}>Nuevo handout</button>}
       {error ? <p className="notice error" role="alert">No se pudo consultar el archivo.</p>
         : !records ? <p className="notice" role="status">Cargando handouts…</p>
           : records.length === 0 ? <p className="notice" role="status">Todavía no hay handouts.</p>
             : records.map((item) => <button type="button" key={item.id} className="manage-row" aria-pressed={selected === item.id}
-              onClick={() => setSelected(item.id)}><strong>{item.title}</strong><span>{statusLabels[item.status]}</span></button>)}
+              disabled={busy} onClick={() => { setCreating(false); setSelected(item.id); }}>
+              <strong>{item.title}</strong><span>{statusLabels[item.status]}</span></button>)}
     </section>
-    {handout && <ManageItem key={`${handout.id}/${handout.version}`} handout={handout} uid={uid} />}
+    {creating && isDemo && <section>
+      {createError && <p className="error" role="alert">{createError}</p>}
+      <HandoutEditor busy={busy} options={options} relations={emptyRelations}
+        save={(fields, edges, file) => void save(fields, edges, file)} />
+    </section>}
+    {handout && <ManageItem key={`${handout.id}/${handout.version}`} handout={handout} uid={uid} options={options} />}
   </div>;
 }

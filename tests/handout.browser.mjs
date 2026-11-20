@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { chromium } from 'playwright-core';
+import { demoImage } from '../scripts/demo-image.mjs';
+import { demoPdf } from '../scripts/demo-pdf.mjs';
 
 const origin = 'http://127.0.0.1:5173';
 const title = 'Captura de telemetría';
@@ -134,6 +136,113 @@ test('PDF pages, zoom, text and authorized download work on mobile', { timeout: 
     await handler.getByRole('button', { name: 'Reabrir borrador' }).click();
     await handler.getByRole('checkbox', { name: 'Permitir descargar desde el visor' }).uncheck();
     await handler.getByRole('button', { name: 'Guardar ficha' }).click();
+  } finally {
+    await browser.close();
+  }
+});
+
+const uploadAlt = 'Archivo de prueba del flujo local';
+
+async function openManager(page) {
+  await page.goto(`${origin}/handler`);
+  await page.getByRole('button', { name: 'Entrar como Handler' }).click();
+  await page.getByRole('button', { name: 'Handouts', exact: true }).click();
+}
+
+async function chooseRelation(page, label, value) {
+  const section = page.getByRole('region', { name: label, exact: true });
+  await section.getByLabel(label, { exact: true }).selectOption(value);
+  await section.getByRole('button', { name: 'Añadir referencia' }).click();
+}
+
+async function publishUpload(handler) {
+  await handler.getByRole('checkbox', { name: /Confirmo que esta copia/ }).check();
+  await handler.getByRole('button', { name: 'Publicar handout' }).click();
+}
+
+test('Handler uploads PNG and PDF drafts, edits references and reopens the files in another session', { timeout: 120000 }, async () => {
+  const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined });
+  try {
+    const creator = await browser.newPage();
+    creator.setDefaultTimeout(15000);
+    await openManager(creator);
+    const files = [
+      { title: 'Carga persistente PNG', name: 'nombre-de-origen-reservado.png', mimeType: 'image/png', buffer: demoImage() },
+      { title: 'Carga persistente PDF', name: 'nombre-de-origen-reservado.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await demoPdf()) },
+    ];
+    const ids = [];
+
+    for (const { title, name, mimeType, buffer } of files) {
+      const pdf = mimeType === 'application/pdf';
+      await creator.getByRole('button', { name: 'Nuevo handout', exact: true }).click();
+      const picker = creator.getByLabel('Archivo multimedia');
+      if (!pdf) {
+        await picker.setInputFiles({ name: 'large.png', mimeType, buffer: Buffer.alloc(102401) });
+        await creator.getByText(/no supere 100 KiB/).waitFor();
+        await picker.setInputFiles({ name: 'bad.png', mimeType, buffer: Buffer.from('<svg>') });
+        await creator.getByText(/La firma del archivo/).waitFor();
+        assert.equal(await creator.getByRole('button', { name: 'Guardar borrador' }).isDisabled(), true);
+      }
+      await picker.setInputFiles({ name, mimeType, buffer });
+      await creator.getByText(new RegExp(name.replace('.', '\\.'))).waitFor();
+      await creator.getByRole('button', { name: 'Previsualizar archivo seleccionado' }).click();
+      await creator.getByRole('img', { name: pdf ? 'Página 1 del PDF' : 'Vista previa del archivo seleccionado' }).waitFor();
+      await creator.getByRole('button', { name: 'Cerrar vista previa del archivo' }).click();
+      await creator.getByLabel('Título', { exact: true }).fill(title);
+      await creator.getByLabel('Texto alternativo').fill(uploadAlt);
+      await creator.getByLabel('Operación', { exact: true }).selectOption('demo-operation');
+      await creator.getByLabel('Documento de origen').fill('Fuente reservada de la carga');
+      await creator.getByLabel('Página de origen').fill('5');
+      await creator.getByLabel('Sección de origen').fill('Sección local');
+      await chooseRelation(creator, 'Referencia visible', 'dossiers:demo-report');
+      await chooseRelation(creator, 'Referencia visible', 'dossiers:demo-draft');
+      await chooseRelation(creator, 'Referencia privada', 'personnel:demo-contact');
+      await creator.getByRole('button', { name: 'Guardar borrador' }).click();
+      const id = (await creator.getByText(/^Borrador · [A-Za-z0-9]+$/).textContent()).split(' · ')[1];
+      ids.push(id);
+      await creator.getByRole('img', { name: pdf ? 'Página 1 del PDF' : uploadAlt }).waitFor();
+    }
+    await creator.close();
+
+    const handler = await browser.newPage();
+    const agent = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    for (const page of [handler, agent]) page.setDefaultTimeout(15000);
+    await openManager(handler);
+    for (const [index, { title, mimeType }] of files.entries()) {
+      const pdf = mimeType === 'application/pdf';
+      await handler.getByRole('button', { name: new RegExp(title) }).click();
+      await handler.getByRole('img', { name: pdf ? 'Página 1 del PDF' : uploadAlt }).waitFor();
+      await handler.getByText('Fuente reservada de la carga').waitFor();
+      await handler.getByRole('link', { name: 'Personal · Elena Vidal' }).waitFor();
+
+      await handler.getByText('Editar procedencia y referencias privadas', { exact: true }).click();
+      await handler.getByLabel('Página de origen').fill('7');
+      const visible = handler.getByRole('region', { name: 'Referencia visible' });
+      await visible.getByRole('button', { name: 'Quitar referencia a Registro de recepción' }).click();
+      await chooseRelation(handler, 'Referencia visible', 'clues:demo-signal');
+      await handler.getByRole('button', { name: 'Guardar ficha' }).click();
+      await handler.getByText('7 · Sección local').waitFor();
+
+      await agent.goto(`${origin}/handouts/${ids[index]}`);
+      await agent.getByRole('button', { name: 'Entrar como agente' }).click();
+      await agent.getByText('Handout no disponible.').waitFor();
+      await publishUpload(handler);
+      await agent.getByRole('img', { name: pdf ? 'Página 1 del PDF' : uploadAlt }).waitFor();
+      await agent.getByRole('link', { name: 'Evidencia · Marca de recepción' }).waitFor();
+      for (const value of ['Fuente reservada de la carga', 'Personal · Elena Vidal', 'nombre-de-origen-reservado']) {
+        assert.equal(await agent.getByText(value).count(), 0, value);
+      }
+      for (const name of ['Expediente · Informe en preparación', 'Expediente · Registro de recepción']) {
+        assert.equal(await agent.getByRole('link', { name, exact: true }).count(), 0, name);
+      }
+      assert.equal(await agent.getByRole('link', { name: /^Descargar/ }).count(), 0);
+      if (pdf) {
+        await agent.getByRole('button', { name: 'Página siguiente' }).click();
+        await agent.getByRole('img', { name: 'Página 2 del PDF' }).waitFor();
+      }
+      await handler.getByRole('button', { name: 'Archivar handout' }).click();
+      await agent.getByText('Handout no disponible.').waitFor();
+    }
   } finally {
     await browser.close();
   }

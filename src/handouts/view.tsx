@@ -14,7 +14,11 @@ export function useHandouts(handling: boolean) {
   return state;
 }
 
-function HandoutViewer({ handout, player }: { handout: Handout; player: boolean }) {
+export function HandoutViewer({ handout, player, localFile }: {
+  handout: Pick<Handout, 'id' | 'mime' | 'byteLength' | 'alt' | 'downloadAllowed'>;
+  player: boolean;
+  localFile?: Blob;
+}) {
   const { id, mime, byteLength } = handout;
   const [media, setMedia] = useState<{ file: Blob; url: string } | 'error' | null>(null);
   const [zoom, setZoom] = useState(100);
@@ -22,13 +26,14 @@ function HandoutViewer({ handout, player }: { handout: Handout; player: boolean 
     if (!isDemo) return;
     let active = true;
     let objectUrl: string | undefined;
-    void getHandoutFile({ id, mime, byteLength }).then((file) => {
+    const source = localFile ? Promise.resolve(localFile) : getHandoutFile({ id, mime, byteLength });
+    void source.then((file) => {
       if (!active) return;
       objectUrl = URL.createObjectURL(file);
       setMedia({ file, url: objectUrl });
     }).catch(() => { if (active) setMedia('error'); });
     return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [id, mime, byteLength]);
+  }, [id, mime, byteLength, localFile]);
 
   if (!isDemo) return <p role="status">El visor de demostración está disponible en los emuladores.</p>;
   if (media === 'error') return <p role="alert">El archivo no está disponible.</p>;
@@ -51,7 +56,7 @@ function HandoutViewer({ handout, player }: { handout: Handout; player: boolean 
         <PdfPreview file={media.file} zoom={zoom} allowPrint={allowDownload} />
       </Suspense>
     </> : <div className="image-scroll" tabIndex={0} aria-label="Imagen ampliable">
-      <img src={media.url} alt={handout.alt} style={{ width: `${zoom}%` }} />
+      <img src={media.url} alt={handout.alt} style={{ width: `${zoom}%` }} onError={() => setMedia('error')} />
     </div>}
   </section>;
 }

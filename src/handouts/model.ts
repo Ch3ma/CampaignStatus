@@ -1,6 +1,8 @@
 import type { Status } from '../domain';
 
-export const relationSlots = ['operation', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6'] as const;
+export const visibleRelationSlots = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6'] as const;
+export const relationSlots = ['operation', ...visibleRelationSlots] as const;
+export const maxHandoutBytes = 100 * 1024;
 export const relationKinds = ['operations', 'handouts', 'dossiers', 'personnel', 'clues'] as const;
 export type RelationKind = typeof relationKinds[number];
 export type Relation = { kind: RelationKind; targetId: string };
@@ -30,6 +32,17 @@ export type Provenance = {
   adaptationNotes: string;
   supportingPages: string;
   references: Relation[];
+};
+
+export type RelationFields = {
+  operationId: string;
+  visible: Relation[];
+  provenance: Provenance;
+};
+
+export const emptyRelations: RelationFields = {
+  operationId: '', visible: [],
+  provenance: { document: '', page: '', section: '', adaptationNotes: '', supportingPages: '', references: [] },
 };
 
 export const relationLabels: Record<RelationKind, string> = {

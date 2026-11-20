@@ -11,10 +11,10 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "emulators": "firebase emulators:start --project demo-black-archive --only auth,firestore",
+    "emulators": "node scripts/emulators.mjs start",
     "seed": "node scripts/seed.mjs",
     "test": "tsc -p tsconfig.test.json && node .test-build/tests/app.test.js",
-    "test:rules": "firebase emulators:exec --project demo-black-archive --only auth,firestore 'node --test tests/firestore.test.mjs'",
+    "test:rules": "node scripts/emulators.mjs exec 'node --test tests/firestore.test.mjs'",
     "test:browser": "node --test tests/handout.browser.mjs"
   },
   "dependencies": {
