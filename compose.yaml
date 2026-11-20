@@ -1,0 +1,21 @@
+services:
+  web:
+    build:
+      context: .
+      target: development
+    ports:
+      - "127.0.0.1:5173:5173"
+
+  emulators:
+    build:
+      context: .
+      target: emulators
+    ports:
+      - "127.0.0.1:9099:9099"
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:4000:4000"
+    volumes:
+      - emulator-downloads:/root/.cache/firebase/emulators
+
+volumes:
+  emulator-downloads:

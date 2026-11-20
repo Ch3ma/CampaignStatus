@@ -22,3 +22,9 @@ La consola administrativa opera con IAM. Limita su acceso a cuentas de confianza
 ## Obsidian
 
 El vault seguirá siendo la fuente de trabajo del Handler. La Fase 1 usa Firestore para las publicaciones que leen los agentes. El flujo de importación y exportación se aplaza hasta que se aprueben los archivos y campos que se podrán transferir desde Obsidian.
+
+## Handouts en el emulador
+
+`src/handouts/` contiene el modelo, el adaptador Firestore, el visor y la extensión del panel del Handler. El visor pide los bytes al servidor y los conserva en memoria mientras está abierto. Las reglas mantienen independientes la ficha de publicación, las relaciones autorizadas, la procedencia reservada y los bytes. Las ediciones comprueban la versión de la ficha en una transacción antes de guardar.
+
+La imagen de prueba se genera en `scripts/demo-image.mjs` y se prepara mediante el SDK administrativo del emulador. El build de producción conserva el visor y la interfaz, mientras que la lectura de bytes de la demo está habilitada exclusivamente en el servidor de desarrollo conectado a emuladores. [Flujo y alcance](HANDOUTS.md)

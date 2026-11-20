@@ -63,6 +63,84 @@ service cloud.firestore {
         allow read, write: if isHandler(cellId);
       }
 
+      match /handouts/{handoutId} {
+        function handoutPath() {
+          return /databases/$(database)/documents/cells/$(cellId)/handouts/$(handoutId);
+        }
+
+        function visibleTarget(kind, id) {
+          let data = get(/databases/$(database)/documents/cells/$(cellId)/$(kind)/$(id)).data;
+          return data.status == 'published' && (kind == 'handouts' || data.audience == 'cell');
+        }
+
+        function released() {
+          return get(handoutPath()).data.status == 'published';
+        }
+
+        function validHandout() {
+          let data = request.resource.data;
+          let fields = ['title', 'category', 'summary', 'narrativeDate', 'tags',
+            'classification', 'alt', 'downloadAllowed', 'mime', 'byteLength',
+            'status', 'createdAt', 'createdBy', 'publishedAt', 'publishedBy', 'updatedAt'];
+          return data.keys().hasAll(fields) && data.keys().hasOnly(fields)
+            && data.title is string && data.title.size() > 0 && data.title.size() <= 120
+            && data.category is string && data.category.size() <= 60
+            && data.summary is string && data.summary.size() <= 1000
+            && data.narrativeDate is string && data.narrativeDate.size() <= 80
+            && data.tags is string && data.tags.size() <= 160
+            && data.classification is string && data.classification.size() > 0 && data.classification.size() <= 48
+            && data.alt is string && data.alt.size() > 0 && data.alt.size() <= 240
+            && data.downloadAllowed is bool && data.mime in ['image/png', 'image/jpeg', 'image/webp']
+            && data.byteLength is int && data.byteLength > 0 && data.byteLength <= 102400
+            && data.status in ['draft', 'review', 'published', 'archived']
+            && data.updatedAt == request.time;
+        }
+
+        function releasable() {
+          let operation = get(/databases/$(database)/documents/cells/$(cellId)/handouts/$(handoutId)/relations/operation).data;
+          let file = get(/databases/$(database)/documents/cells/$(cellId)/handouts/$(handoutId)/files/preview).data;
+          return operation.kind == 'operations' && visibleTarget('operations', operation.targetId)
+            && file.bytes is bytes && file.bytes.size() == request.resource.data.byteLength
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['status', 'publishedAt', 'publishedBy', 'updatedAt']);
+        }
+
+        allow read: if isHandler(cellId) || (isAgent(cellId) && resource.data.status == 'published');
+        allow create: if isHandler(cellId) && validHandout() && validAudit(true)
+          && request.resource.data.status == 'draft'
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time;
+        allow update: if isHandler(cellId) && validHandout() && validAudit(false)
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.createdBy == resource.data.createdBy
+          && request.resource.data.mime == resource.data.mime
+          && request.resource.data.byteLength == resource.data.byteLength
+          && (request.resource.data.status != 'published' || releasable());
+
+        match /files/{fileId} {
+          allow get: if fileId == 'preview' && (isHandler(cellId) || (isAgent(cellId) && released()
+            && resource.data.keys().hasOnly(['bytes'])));
+        }
+
+        match /private/{entryId} {
+          allow get: if entryId == 'provenance' && isHandler(cellId);
+        }
+
+        match /relations/{slot} {
+          function visibleRelation() {
+            let kind = resource.data.kind;
+            return (slot == 'operation' ? kind == 'operations'
+              : slot in ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
+                && kind in ['handouts', 'dossiers', 'personnel', 'clues'])
+              && resource.data.keys().hasOnly(['kind', 'targetId'])
+              && resource.data.targetId is string && resource.data.targetId.matches('^[A-Za-z0-9_-]{1,128}$')
+              && visibleTarget(kind, resource.data.targetId);
+          }
+
+          allow get: if isHandler(cellId) || (isAgent(cellId) && released() && visibleRelation());
+        }
+      }
+
       match /{collectionId}/{recordId} {
         function supportedCollection() {
           return collectionId in ['operations', 'dossiers', 'personnel', 'clues', 'messages'];

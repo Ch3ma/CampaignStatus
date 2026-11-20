@@ -9,3 +9,7 @@ dist/
 *service-account*.json
 *serviceAccount*.json
 .test-build/
+
+# Fuentes privadas de campaña
+*.[pP][dD][fF]
+private-handouts/

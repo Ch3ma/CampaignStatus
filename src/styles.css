@@ -186,3 +186,17 @@ h2 { font-size: 1.2rem; letter-spacing: -.025em; }
   .record-paper .tags span { background: white; color: black; border: 1px solid #666; }
   .portrait, .record-top, .record-paper h1 { break-inside: avoid; }
 }
+
+.handout-management { display: grid; min-width: 0; gap: 1rem; }
+.handout-panel { padding: .9rem; display: grid; gap: .65rem; }
+.handout-panel :is(h2, h3, dl, ul) { margin: 0; }
+.handout-panel dl { overflow-wrap: anywhere; }
+.handout-panel dt { font-weight: 700; }
+.handout-panel dd { margin: 0 0 .45rem; }
+.record-paper a { color: #37502f; }
+.image-viewer { min-width: 0; border: 1px solid var(--line); background: var(--surface); padding: .7rem; margin-block: .7rem; }
+.image-tools { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem; }
+.image-tools [aria-pressed="true"] { border-color: var(--green); background: var(--green-dim); }
+.image-tools output { font-family: var(--mono); }
+.image-scroll { margin-top: .65rem; min-width: 0; max-height: 70vh; overflow: auto; background: var(--background); }
+.image-scroll img { display: block; max-width: none; height: auto; }

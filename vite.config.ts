@@ -3,6 +3,15 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   plugins: [react()],
+  publicDir: false,
+  server: {
+    fs: {
+      deny: [
+        '.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/AGENTS.md',
+        '**/*.[pP][dD][fF]', '**/private-handouts/**',
+      ],
+    },
+  },
   build: {
     sourcemap: false,
     rollupOptions: {
