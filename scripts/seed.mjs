@@ -1,5 +1,6 @@
 import { initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { demoImage } from './demo-image.mjs';
+import { Bytes, doc, runTransaction, serverTimestamp } from 'firebase/firestore';
 
 const projectId = 'demo-black-archive';
 const firestore = { host: '127.0.0.1', port: 8080 };
@@ -33,10 +34,29 @@ try {
   await env.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     const cell = 'cells/cell-a';
+    const preview = demoImage();
+    const handout = `${cell}/handouts/demo-telemetry`;
     const packet = [
       [cell, { name: 'Cell A' }],
       [`${cell}/members/${handler}`, { role: 'handler', alias: 'Asmodan' }],
       [`${cell}/members/${agent}`, { role: 'agent', alias: 'Agente de prueba' }],
+      [handout, {
+        title: 'Captura de telemetría', category: 'Imagen de demostración',
+        summary: 'Registro ficticio generado para probar el visor y el flujo de publicación.',
+        narrativeDate: 'Turno nocturno', tags: 'Transmisión, Campo', classification: 'RESTRICTED',
+        alt: 'Una señal verde oscila sobre una cuadrícula con anillos de referencia.',
+        downloadAllowed: false, mime: 'image/png', byteLength: preview.length,
+        status: 'draft', createdBy: handler, createdAt: serverTimestamp(),
+        publishedBy: '', publishedAt: null, updatedAt: serverTimestamp(),
+      }],
+      [`${handout}/files/preview`, { bytes: Bytes.fromUint8Array(preview) }],
+      [`${handout}/relations/operation`, { kind: 'operations', targetId: 'demo-operation' }],
+      [`${handout}/relations/r1`, { kind: 'dossiers', targetId: 'demo-report' }],
+      [`${handout}/private/provenance`, {
+        document: 'Cuaderno de prueba inventado', page: '3', section: 'Ensayo de campo',
+        adaptationNotes: 'Telemetría simulada.', supportingPages: '3–4',
+        references: [{ kind: 'personnel', targetId: 'demo-contact' }],
+      }],
       [`${cell}/operations/demo-operation`, published(handler, {
         title: 'Operación Umbral', stage: 'En curso',
         summary: 'Una estación de monitoreo transmitió fuera del horario previsto. Revisa los registros recuperados por la célula.',

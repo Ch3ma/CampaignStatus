@@ -1,3 +1,4 @@
+import { ManageHandouts } from './handouts/manage';
 import { useState, type FormEvent } from 'react';
 import { Notice, PageHeading, useRecords, type SessionIdentity } from './archive';
 import {
@@ -121,7 +122,7 @@ function Section({ section, session }: { section: Collection; session: SessionId
 }
 
 export function Handler({ session }: { session: SessionIdentity }) {
-  const [section, setSection] = useState<Collection>('dossiers');
+  const [section, setSection] = useState<Collection | 'handouts'>('dossiers');
   return <>
     <PageHeading eyebrow="Administración de célula" title="Panel del Handler">
       Revisa los registros y controla qué material se publica.
@@ -129,7 +130,8 @@ export function Handler({ session }: { session: SessionIdentity }) {
     <div className="manage-tabs" role="group" aria-label="Tipo de registro">
       {collections.map((item) => <button key={item} aria-pressed={section === item} onClick={() => setSection(item)}>
         {collectionLabels[item]}</button>)}
+      <button aria-pressed={section === 'handouts'} onClick={() => setSection('handouts')}>Handouts</button>
     </div>
-    <Section key={section} section={section} session={session} />
+    {section === 'handouts' ? <ManageHandouts uid={session.uid} /> : <Section key={section} section={section} session={session} />}
   </>;
 }

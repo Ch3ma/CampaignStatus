@@ -25,6 +25,8 @@ docker compose run --rm --no-deps emulators npm run test:rules
 docker compose down
 ```
 
+Para probar el visor en Chromium, conserva la demo en ejecución y ejecuta `npm ci`, `npx playwright-core install chromium` y `npm run test:browser` en el host. La prueba usa la semilla de una instancia local recién iniciada.
+
 Los contenedores de prueba usan sus propios puertos internos y pueden ejecutarse junto a la demo. Si cambias el código, ejecuta `docker compose build` para actualizar las imágenes de prueba.
 
 ## Imagen estática

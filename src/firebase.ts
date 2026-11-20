@@ -28,7 +28,7 @@ if (isDemo && auth && db) {
   connectFirestoreEmulator(db, '127.0.0.1', 8080);
 }
 
-function database() {
+export function database() {
   if (!db) throw new Error('Firestore no está configurado.');
   return db;
 }
@@ -105,7 +105,7 @@ export function watchRecords(
   return () => subscriptions.forEach((unsubscribe) => unsubscribe());
 }
 
-function recordVersion(updatedAt: unknown) {
+export function recordVersion(updatedAt: unknown) {
   return updatedAt instanceof Timestamp ? updatedAt.valueOf() : '';
 }
 

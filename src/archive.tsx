@@ -120,7 +120,9 @@ export function ArchiveList({ section, base, session }: { section: Collection; b
   const activeTag = tags.includes(tag) ? tag : '';
   const filtered = state.records ? filterDossiers(state.records, search, activeTag) : [];
   return <>
-    <PageHeading eyebrow="Archivo de célula" title={collectionLabels[section]} />
+    <PageHeading eyebrow="Archivo de célula" title={collectionLabels[section]}>
+      {(section === 'dossiers' || section === 'clues') && <Link to="/handouts">Consultar archivo multimedia</Link>}
+    </PageHeading>
     {section === 'dossiers' && <div className="filters">
       <label>Buscar expedientes<input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Título, descripción o etiqueta" /></label>
       <label>Etiqueta<select value={activeTag} onChange={(event) => setTag(event.target.value)}>

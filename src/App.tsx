@@ -1,3 +1,4 @@
+import { HandoutArchive } from './handouts/view';
 import { useEffect, useState, type FormEvent } from 'react';
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from 'firebase/auth';
 import { Link, Navigate, NavLink, Route, Routes } from 'react-router-dom';
@@ -98,6 +99,7 @@ function Session({ user }: { user: User }) {
           <Route path="/" element={<Dashboard session={session} cellName={cellName} />} />
           <Route path="/expedientes/:recordId?" element={<ArchiveList key="dossiers" section="dossiers" base="/expedientes" session={session} />} />
           <Route path="/personal/:recordId?" element={<ArchiveList key="personnel" section="personnel" base="/personal" session={session} />} />
+          <Route path="/handouts/:handoutId?" element={<HandoutArchive />} />
           <Route path="/evidencias/:recordId?" element={<ArchiveList key="clues" section="clues" base="/evidencias" session={session} />} />
           <Route path="/comunicaciones/:recordId?" element={<ArchiveList key="messages" section="messages" base="/comunicaciones" session={session} />} />
           {session.role === 'handler' && <Route path="/handler" element={<Handler session={session} />} />}
