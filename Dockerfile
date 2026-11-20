@@ -20,7 +20,7 @@ ENV JAVA_HOME=/opt/java/openjdk
 ENV PATH="/opt/java/openjdk/bin:${PATH}"
 ENV CI=true
 RUN node -e "const fs = require('node:fs'); const config = require('./firebase.json'); for (const name of ['auth', 'firestore', 'storage', 'ui']) { if (config.emulators[name]) config.emulators[name].host = '0.0.0.0'; } fs.writeFileSync('firebase.json', JSON.stringify(config));"
-CMD ["npm", "run", "emulators"]
+CMD ["node", "scripts/emulators.mjs", "start", "--persist"]
 
 FROM source AS build
 ARG PUBLIC_FIREBASE_WEB_KEY

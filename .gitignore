@@ -13,3 +13,5 @@ dist/
 # Fuentes privadas de campaña
 *.[pP][dD][fF]
 private-handouts/
+
+.firebase-emulators.json

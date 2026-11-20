@@ -1,3 +1,4 @@
+import { inspectHandoutFile } from '../src/handouts/upload.ts';
 import { clampPage, clampZoom, handoutDownloadName, fileMatches, playerCanSeeTarget } from '../src/handouts/model.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -52,4 +53,17 @@ test('PDF viewer clamps page numbers and verifies the media signature', () => {
   assert.equal(fileMatches(new TextEncoder().encode('%PDF-1.7'), 'application/pdf'), true);
   assert.equal(fileMatches(new TextEncoder().encode('<html>'), 'application/pdf'), false);
   assert.equal(handoutDownloadName('demo-pdf', 'application/pdf'), 'handout-demo-pdf.pdf');
+});
+
+test('file selection validates size, bytes and the declared MIME', async () => {
+  const png = Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10);
+  const result = await inspectHandoutFile(new File([png], 'local.png', { type: 'image/png' }));
+  assert.equal(result.name, 'local.png');
+  assert.equal(result.mime, 'image/png');
+  assert.deepEqual(result.bytes, png);
+  assert.equal((await inspectHandoutFile(new File(['%PDF-1.7'], 'sample.pdf'))).mime, 'application/pdf');
+  await assert.rejects(inspectHandoutFile(new File([png], 'wrong.pdf', { type: 'application/pdf' })), /firma/);
+  await assert.rejects(inspectHandoutFile(new File(['<svg>'], 'wrong.png', { type: 'image/png' })), /firma/);
+  await assert.rejects(inspectHandoutFile(new File([new Uint8Array(102401)], 'large.pdf')), /100 KiB/);
+  await assert.rejects(inspectHandoutFile(new File([], 'empty.pdf')), /100 KiB/);
 });

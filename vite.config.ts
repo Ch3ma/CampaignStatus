@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     fs: {
       deny: [
-        '.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/AGENTS.md',
+        '.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/.firebase/**', '**/.firebase-emulators.json', '**/AGENTS.md',
         '**/*.[pP][dD][fF]', '**/private-handouts/**',
       ],
     },
