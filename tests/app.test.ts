@@ -1,3 +1,5 @@
+import { cellStorageLimit, storageLimit } from '../src/handouts/limits.ts';
+import { createKey, decryptFile, encryptFile, mediaContext } from '../src/handouts/envelope.ts';
 import { inspectHandoutFile } from '../src/handouts/upload.ts';
 import { clampPage, clampZoom, handoutDownloadName, fileMatches, playerCanSeeTarget } from '../src/handouts/model.ts';
 import assert from 'node:assert/strict';
@@ -66,4 +68,29 @@ test('file selection validates size, bytes and the declared MIME', async () => {
   await assert.rejects(inspectHandoutFile(new File(['<svg>'], 'wrong.png', { type: 'image/png' })), /firma/);
   await assert.rejects(inspectHandoutFile(new File([new Uint8Array(102401)], 'large.pdf')), /100 KiB/);
   await assert.rejects(inspectHandoutFile(new File([], 'empty.pdf')), /100 KiB/);
+});
+
+test('Storage size configuration stays bounded and accepts multi-MiB files', async () => {
+  assert.equal(storageLimit(undefined), 64 * 1024 * 1024);
+  assert.equal(storageLimit('128'), 128 * 1024 * 1024);
+  assert.equal(storageLimit('999'), storageLimit(undefined));
+  assert.equal(cellStorageLimit(undefined), storageLimit(undefined));
+  assert.equal(cellStorageLimit(40 * 1024 * 1024), storageLimit('40'));
+  assert.throws(() => cellStorageLimit('32'), /límite/);
+  const pdf = new File(['%PDF-1.7', new Uint8Array(2 * 1024 * 1024)], 'demo.pdf', { type: 'application/pdf' });
+  assert.equal((await inspectHandoutFile(pdf, storageLimit('4'))).mime, 'application/pdf');
+  await assert.rejects(inspectHandoutFile(pdf, storageLimit('1')), /1 MiB/);
+});
+
+test('encrypted bytes require the key and exact object identity', async () => {
+  const data = new TextEncoder().encode('%PDF-1.7 synthetic');
+  const context = mediaContext('cell-a', 'record', 'version', 'application/pdf');
+  const key = createKey();
+  const encrypted = await encryptFile(data, key, context);
+  const decrypted = await decryptFile(encrypted.buffer, key, context);
+  assert.deepEqual(new Uint8Array(decrypted), data);
+  await assert.rejects(decryptFile(encrypted.buffer, createKey(), context));
+  await assert.rejects(decryptFile(encrypted.buffer, key, mediaContext('other', 'record', 'version', 'application/pdf')));
+  encrypted[encrypted.length - 1] ^= 1;
+  await assert.rejects(decryptFile(encrypted.buffer, key, context));
 });

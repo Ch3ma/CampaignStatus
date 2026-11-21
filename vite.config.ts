@@ -1,7 +1,11 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
-export default defineConfig({
+export default defineConfig(({ command, mode, isPreview }) => ({
+  base: mode === 'pages' ? '/CampaignStatus/' : '/',
+  define: {
+    __ALLOW_EMULATORS__: JSON.stringify(command === 'serve' && !isPreview),
+  },
   plugins: [react()],
   publicDir: false,
   server: {
@@ -24,4 +28,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

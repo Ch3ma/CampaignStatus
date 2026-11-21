@@ -1,25 +1,30 @@
+import { createKey, sourceDigest } from './envelope';
+import { cellStorageLimit } from './limits';
+import { deletePendingFile, readCloudFile, uploadCloudFile, verifyCloudObject } from './storage';
 import type { CheckedHandout } from './upload';
 import {
-  Bytes, collection, doc, getDocFromServer, onSnapshot, query, runTransaction,
+  Bytes, collection, doc, getDocFromServer, getDocsFromServer, onSnapshot, query, runTransaction,
   serverTimestamp, where, writeBatch, type DocumentData, type DocumentReference,
 } from 'firebase/firestore';
 import { cellId } from '../domain';
-import { database, isDemo, recordVersion, RecordChangedError } from '../firebase';
+import { database, isDemo, recordVersion, RecordChangedError, storage } from '../firebase';
 import {
-  fileMatches, playerCanSeeTarget, relationKinds, relationSlots, visibleRelationSlots, emptyRelations,
-  type Handout, type HandoutFields, type LinkedRecord, type Provenance, type Relation, type RelationFields,
+  fileMatches, playerCanSeeTarget, relationKinds, relationSlots, visibleRelationSlots, emptyRelations, emptyCloud,
+  type Handout, type HandoutFields, type LinkedRecord, type Provenance, type Relation, type RelationFields, type CloudVersion,
 } from './model';
 
 const collectionRef = () => collection(database(), 'cells', cellId, 'handouts');
 const recordRef = (id: string) => doc(collectionRef(), id);
 const provenanceRef = (target: DocumentReference) => doc(target, 'private', 'provenance');
+const versionRef = (target: DocumentReference, id: string) => doc(target, 'versions', id);
+const keyRef = (target: DocumentReference, id: string) => doc(target, 'keys', id);
 const relationRef = (target: DocumentReference, slot: string) => doc(target, 'relations', slot);
 
 function fromDocument(id: string, data: DocumentData): Handout {
   return {
     id, version: recordVersion(data.updatedAt), title: data.title, category: data.category, summary: data.summary,
     narrativeDate: data.narrativeDate, tags: data.tags, classification: data.classification, alt: data.alt,
-    downloadAllowed: data.downloadAllowed, mime: data.mime, byteLength: data.byteLength, status: data.status,
+    downloadAllowed: data.downloadAllowed, mime: data.mime, byteLength: data.byteLength, status: data.status, cloud: data.cloud ?? null,
   };
 }
 
@@ -34,12 +39,25 @@ export function watchHandouts(handling: boolean, ready: (records: Handout[] | nu
   }, fail);
 }
 
-export async function getHandoutFile(handout: Pick<Handout, 'id' | 'mime' | 'byteLength'>) {
-  if (!isDemo) throw new Error('El visor de prueba requiere emuladores.');
-  const snapshot = await getDocFromServer(doc(recordRef(handout.id), 'files', 'preview'));
-  const stored: unknown = snapshot.data()?.bytes;
-  if (!(stored instanceof Bytes)) throw new Error('El archivo no está disponible.');
-  const bytes = new Uint8Array(stored.toUint8Array());
+async function getKey(id: string, revision: string) {
+  const value: unknown = (await getDocFromServer(keyRef(recordRef(id), revision))).data()?.key;
+  if (typeof value !== 'string') throw new Error('Falta la clave del archivo.');
+  return value;
+}
+
+export async function getHandoutFile(handout: Pick<Handout, 'id' | 'mime' | 'byteLength' | 'cloud'>) {
+  let bytes: Uint8Array<ArrayBuffer>;
+  const version = handout.cloud?.active;
+  if (version) {
+    const key = await getKey(handout.id, version);
+    bytes = await readCloudFile(handout.id, version, handout.mime, handout.byteLength, key);
+  } else {
+    if (!isDemo) throw new Error('La ficha no tiene un archivo disponible.');
+    const snapshot = await getDocFromServer(doc(recordRef(handout.id), 'files', 'preview'));
+    const stored: unknown = snapshot.data()?.bytes;
+    if (!(stored instanceof Bytes)) throw new Error('El archivo no está disponible.');
+    bytes = new Uint8Array(stored.toUint8Array());
+  }
   if (bytes.length !== handout.byteLength || !fileMatches(bytes, handout.mime)) {
     throw new Error('El archivo no coincide con su ficha.');
   }
@@ -128,24 +146,143 @@ function writeRelations(writer: RelationWriter, target: DocumentReference, data:
   }
 }
 
+async function pendingVersion(target: DocumentReference, file: CheckedHandout) {
+  const policy = (await getDocFromServer(doc(database(), 'cells', cellId, 'handoutPolicy', 'sources'))).data();
+  const blocked: unknown = policy?.blockedHashes;
+  if (!Array.isArray(blocked) || blocked.length === 0) throw new Error('Configura la política de fuentes reservadas.');
+  const limit = cellStorageLimit(policy?.maxBytes);
+  if (file.bytes.length > limit) {
+    throw new Error(`El límite de la célula es de ${limit / (1024 * 1024)} MiB por archivo.`);
+  }
+  const sourceHash = await sourceDigest(file.bytes);
+  if (blocked.includes(sourceHash)) throw new Error('Este archivo pertenece a las fuentes reservadas.');
+  const revision = doc(collection(target, 'versions')).id;
+  return {
+    id: revision, key: createKey(),
+    data: { mime: file.mime, byteLength: file.bytes.length, sourceHash, status: 'pending', createdAt: serverTimestamp() },
+  };
+}
+
+function writePending(writer: RelationWriter, target: DocumentReference, pending: Awaited<ReturnType<typeof pendingVersion>>) {
+  writer.set(versionRef(target, pending.id), pending.data);
+  writer.set(keyRef(target, pending.id), { key: pending.key });
+}
+
 export async function createHandout(fields: HandoutFields, relations: RelationFields, file: CheckedHandout, uid: string) {
-  if (!isDemo) throw new Error('La carga requiere emuladores locales.');
+  if (!storage) throw new Error('El almacenamiento multimedia no está configurado.');
   const target = doc(collectionRef());
+  const pending = await pendingVersion(target, file);
   const batch = writeBatch(database());
   batch.set(target, {
     ...fields, mime: file.mime, byteLength: file.bytes.length, status: 'draft',
+    cloud: { ...emptyCloud, pending: pending.id, pendingBytes: pending.data.byteLength },
     createdAt: serverTimestamp(), createdBy: uid, updatedAt: serverTimestamp(), publishedAt: null, publishedBy: '',
   });
-  batch.set(doc(target, 'files', 'preview'), { bytes: Bytes.fromUint8Array(file.bytes) });
+  writePending(batch, target, pending);
   writeRelations(batch, target, relations, false);
   await batch.commit();
-  return target.id;
+  return { id: target.id, revision: pending.id };
+}
+
+export async function stageReplacement(handout: Handout, file: CheckedHandout) {
+  const target = recordRef(handout.id);
+  const pending = await pendingVersion(target, file);
+  const cloud = handout.cloud ?? emptyCloud;
+  if (cloud.pending || cloud.cleanup) throw new Error('Completa o descarta la carga pendiente.');
+  await runTransaction(database(), async (transaction) => {
+    const data = (await transaction.get(target)).data();
+    if (!data || recordVersion(data.updatedAt) !== handout.version) throw new RecordChangedError();
+    transaction.update(target, {
+      cloud: { ...cloud, pending: pending.id, pendingBytes: pending.data.byteLength },
+      status: handout.status === 'published' ? 'review' : handout.status, updatedAt: serverTimestamp(),
+    });
+    writePending(transaction, target, pending);
+  });
+  return pending.id;
+}
+
+export async function completeUpload(
+  id: string, revision: string, file: CheckedHandout, signal: AbortSignal, progress: (percent: number) => void,
+) {
+  const target = recordRef(id);
+  const versionData = (await getDocFromServer(versionRef(target, revision))).data();
+  if (!versionData || versionData.status !== 'pending') throw new RecordChangedError();
+  const version = { ...versionData, id: revision } as CloudVersion;
+  const present = (await getDocFromServer(target)).data();
+  if (present?.cloud?.pending !== revision) throw new RecordChangedError();
+  if (present.cloud.pendingBytes === undefined) {
+    // Bind the expected size of a legacy pending revision without changing its key or object.
+    await runTransaction(database(), async (transaction) => {
+      const current = (await transaction.get(target)).data();
+      if (current?.cloud?.pending !== revision) throw new RecordChangedError();
+      if (current.cloud.pendingBytes === undefined) {
+        transaction.update(target, { 'cloud.pendingBytes': version.byteLength, updatedAt: serverTimestamp() });
+      }
+    });
+  }
+  signal.throwIfAborted();
+  await uploadCloudFile(id, version, await getKey(id, revision), file.bytes, signal, progress);
+  signal.throwIfAborted();
+  await runTransaction(database(), async (transaction) => {
+    const data = (await transaction.get(target)).data();
+    if (!data || data.cloud?.pending !== revision) throw new RecordChangedError();
+    transaction.update(versionRef(target, revision), { status: 'ready' });
+    transaction.update(target, {
+      cloud: { ...emptyCloud, active: revision }, mime: version.mime, byteLength: version.byteLength,
+      updatedAt: serverTimestamp(),
+    });
+  });
+}
+
+export async function discardUpload(handout: Handout) {
+  const target = recordRef(handout.id);
+  const cloud = handout.cloud;
+  const id = cloud?.cleanup || cloud?.pending;
+  if (!cloud || !id) return;
+  if (cloud.pending) {
+    await runTransaction(database(), async (transaction) => {
+      const current = (await transaction.get(target)).data();
+      if (current?.cloud?.pending !== id) throw new RecordChangedError();
+      transaction.update(target, { cloud: { ...emptyCloud, active: cloud.active, cleanup: id }, updatedAt: serverTimestamp() });
+      transaction.update(versionRef(target, id), { status: 'discarding' });
+    });
+  }
+  await deletePendingFile(handout.id, id);
+  await runTransaction(database(), async (transaction) => {
+    const current = (await transaction.get(target)).data();
+    if (current?.cloud?.cleanup !== id) throw new RecordChangedError();
+    transaction.update(target, { cloud: { ...emptyCloud, active: cloud.active }, updatedAt: serverTimestamp() });
+    transaction.update(versionRef(target, id), { status: 'discarded' });
+  });
+}
+
+export async function getReadyVersions(id: string) {
+  const snapshots = await getDocsFromServer(query(collection(recordRef(id), 'versions'), where('status', '==', 'ready')));
+  return snapshots.docs.map((doc) => ({
+    ...doc.data(), id: doc.id, createdAt: doc.data().createdAt.toMillis(),
+  } as CloudVersion & { createdAt: number })).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function restoreVersion(handout: Handout, version: CloudVersion) {
+  await verifyCloudObject(handout.id, version.id, version.byteLength);
+  const target = recordRef(handout.id);
+  await runTransaction(database(), async (transaction) => {
+    const current = (await transaction.get(target)).data();
+    if (!current || recordVersion(current.updatedAt) !== handout.version) throw new RecordChangedError();
+    transaction.update(target, {
+      cloud: { ...emptyCloud, active: version.id }, mime: version.mime, byteLength: version.byteLength,
+      status: handout.status === 'published' ? 'review' : handout.status, updatedAt: serverTimestamp(),
+    });
+  });
 }
 
 export async function updateHandout(
   handout: Handout, update: HandoutFields | 'published' | 'archived' | 'draft', uid: string, relations?: RelationFields,
 ) {
-  if (relations && !isDemo) throw new Error('La edición de referencias requiere emuladores locales.');
+  if (update === 'published' && handout.cloud?.active) {
+    await verifyCloudObject(handout.id, handout.cloud.active, handout.byteLength);
+  }
+  if (relations && !isDemo && !handout.cloud) throw new Error('La edición de referencias requiere emuladores locales.');
   const target = recordRef(handout.id);
   await runTransaction(database(), async (transaction) => {
     const current = (await transaction.get(target)).data();

@@ -2,7 +2,7 @@ import type { Status } from '../domain';
 
 export const visibleRelationSlots = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6'] as const;
 export const relationSlots = ['operation', ...visibleRelationSlots] as const;
-export const maxHandoutBytes = 100 * 1024;
+
 export const relationKinds = ['operations', 'handouts', 'dossiers', 'personnel', 'clues'] as const;
 export type RelationKind = typeof relationKinds[number];
 export type Relation = { kind: RelationKind; targetId: string };
@@ -18,12 +18,20 @@ export type HandoutFields = {
   alt: string;
   downloadAllowed: boolean;
 };
+export const emptyCloud = { active: '', pending: '', cleanup: '' };
+export type CloudState = typeof emptyCloud & { pendingBytes?: number };
+export type CloudVersion = {
+  id: string; mime: HandoutMime; byteLength: number; sourceHash: string;
+  status: 'pending' | 'ready' | 'discarding' | 'discarded';
+};
+
 export type Handout = HandoutFields & {
   id: string;
   mime: HandoutMime;
   byteLength: number;
   status: Status;
   version: string;
+  cloud: CloudState | null;
 };
 export type Provenance = {
   document: string;

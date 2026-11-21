@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { mkdtemp, open, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { demoImage } from '../scripts/demo-image.mjs';
 import { demoPdf } from '../scripts/demo-pdf.mjs';
@@ -162,23 +165,32 @@ async function publishUpload(handler) {
 
 test('Handler uploads PNG and PDF drafts, edits references and reopens the files in another session', { timeout: 120000 }, async () => {
   const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined });
+  const fixtureDir = await mkdtemp(join(tmpdir(), 'black-archive-browser-'));
   try {
     const creator = await browser.newPage();
     creator.setDefaultTimeout(15000);
     await openManager(creator);
     const files = [
-      { title: 'Carga persistente PNG', name: 'nombre-de-origen-reservado.png', mimeType: 'image/png', buffer: demoImage() },
-      { title: 'Carga persistente PDF', name: 'nombre-de-origen-reservado.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await demoPdf()) },
+      { title: 'Carga persistente PNG', name: 'nombre-de-origen-reservado.png', mimeType: 'image/png', buffer: demoImage({ large: true }) },
+      { title: 'Carga persistente PDF', name: 'nombre-de-origen-reservado.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await demoPdf({ large: true })) },
     ];
     const ids = [];
 
     for (const { title, name, mimeType, buffer } of files) {
       const pdf = mimeType === 'application/pdf';
+      assert.ok(buffer.length > 2 * 1024 * 1024);
       await creator.getByRole('button', { name: 'Nuevo handout', exact: true }).click();
       const picker = creator.getByLabel('Archivo multimedia');
       if (!pdf) {
-        await picker.setInputFiles({ name: 'large.png', mimeType, buffer: Buffer.alloc(102401) });
-        await creator.getByText(/no supere 100 KiB/).waitFor();
+        const oversized = join(fixtureDir, 'large.png');
+        const handle = await open(oversized, 'w');
+        try {
+          await handle.truncate(64 * 1024 * 1024 + 1);
+        } finally {
+          await handle.close();
+        }
+        await picker.setInputFiles(oversized);
+        await creator.getByText(/no supere 64 MiB/).waitFor();
         await picker.setInputFiles({ name: 'bad.png', mimeType, buffer: Buffer.from('<svg>') });
         await creator.getByText(/La firma del archivo/).waitFor();
         assert.equal(await creator.getByRole('button', { name: 'Guardar borrador' }).isDisabled(), true);
@@ -243,6 +255,67 @@ test('Handler uploads PNG and PDF drafts, edits references and reopens the files
       await handler.getByRole('button', { name: 'Archivar handout' }).click();
       await agent.getByText('Handout no disponible.').waitFor();
     }
+  } finally {
+    await browser.close();
+    await rm(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('Handler can cancel a resumable replacement, retry it and restore a prior version', { timeout: 90000 }, async () => {
+  const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined });
+  try {
+    const handler = await browser.newPage();
+    const agent = await browser.newPage();
+    for (const page of [handler, agent]) page.setDefaultTimeout(15000);
+    await openManager(handler);
+    await handler.getByRole('button', { name: /Carga persistente PNG/ }).click();
+    await handler.getByRole('button', { name: 'Reabrir borrador' }).click();
+    const id = (await handler.getByText(/^Borrador · [A-Za-z0-9]+$/).textContent()).split(' · ')[1];
+    await publishUpload(handler);
+    await agent.goto(`${origin}/handouts/${id}`);
+    await agent.getByRole('button', { name: 'Entrar como agente' }).click();
+    await agent.getByRole('img', { name: uploadAlt }).waitFor();
+
+    const pdf = { name: 'replacement.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await demoPdf({ large: true })) };
+    const pattern = 'http://127.0.0.1:9199/**';
+    let suspended;
+    const started = new Promise((resolve) => { suspended = resolve; });
+    let continueUpload;
+    const release = new Promise((resolve) => { continueUpload = resolve; });
+    await handler.route(pattern, async (route) => {
+      if (route.request().method() === 'POST' && route.request().headers()['x-goog-upload-protocol'] === 'resumable') {
+        suspended();
+        await release;
+        await route.abort().catch(() => {});
+      } else {
+        await route.continue();
+      }
+    });
+    await handler.getByLabel('Seleccionar archivo de reemplazo').setInputFiles(pdf);
+    try {
+      await started;
+      await agent.getByText('Handout no disponible.').waitFor();
+      await handler.getByRole('button', { name: 'Cancelar carga' }).click();
+      await handler.getByText(/Carga cancelada/).waitFor();
+    } finally {
+      continueUpload();
+      await handler.unroute(pattern);
+    }
+    const retry = handler.getByLabel('Reintentar con el mismo archivo');
+    await retry.setInputFiles({ ...pdf, buffer: Buffer.from(await demoPdf()) });
+    await handler.getByText('Selecciona la misma copia que inició esta carga.').waitFor();
+    await retry.setInputFiles(pdf);
+    await handler.getByRole('img', { name: 'Página 1 del PDF' }).waitFor();
+    await publishUpload(handler);
+    await agent.getByRole('img', { name: 'Página 1 del PDF' }).waitFor();
+
+    await handler.getByRole('button', { name: /Restaurar .*image\/png/ }).click();
+    await agent.getByText('Handout no disponible.').waitFor();
+    await handler.getByRole('img', { name: uploadAlt }).waitFor();
+    await publishUpload(handler);
+    await agent.getByRole('img', { name: uploadAlt }).waitFor();
+    await handler.getByRole('button', { name: 'Archivar handout' }).click();
+    await agent.getByText('Handout no disponible.').waitFor();
   } finally {
     await browser.close();
   }

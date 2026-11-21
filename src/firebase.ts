@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app';
+import { connectStorageEmulator, getStorage } from 'firebase/storage';
 import { connectAuthEmulator, initializeAuth, inMemoryPersistence } from 'firebase/auth';
 import {
   addDoc, collection, connectFirestoreEmulator, doc, getDocFromServer, initializeFirestore,
@@ -10,22 +11,25 @@ import {
   type RecordFields, type Role,
 } from './domain';
 
-const env = import.meta.env;
-export const isDemo = env.DEV && env.VITE_USE_EMULATORS === 'true';
+declare const __ALLOW_EMULATORS__: boolean;
+export const isDemo = __ALLOW_EMULATORS__ && import.meta.env.VITE_USE_EMULATORS === 'true';
 const config = isDemo ? { apiKey: 'demo-key', projectId: demoProject } : {
-  apiKey: env.VITE_FIREBASE_API_KEY,
-  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: env.VITE_FIREBASE_PROJECT_ID,
-  appId: env.VITE_FIREBASE_APP_ID,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-const app = Object.values(config).every(Boolean) ? initializeApp(config) : null;
+const bucket = isDemo ? `${demoProject}.appspot.com` : import.meta.env.VITE_FIREBASE_STORAGE_BUCKET;
+const app = Object.values(config).every(Boolean) ? initializeApp({ ...config, storageBucket: bucket }) : null;
+export const storage = app && bucket ? getStorage(app) : null;
 export const auth = app ? initializeAuth(app, { persistence: inMemoryPersistence }) : null;
 const db = app ? initializeFirestore(app, { localCache: memoryLocalCache() }) : null;
 
 if (isDemo && auth && db) {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
   connectFirestoreEmulator(db, '127.0.0.1', 8080);
+  if (storage) connectStorageEmulator(storage, '127.0.0.1', 9199);
 }
 
 export function database() {

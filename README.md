@@ -52,6 +52,8 @@ Detén primero el emulador manual antes de ejecutar `test:rules`. Ese comando in
 
 Las credenciales de Git y GCP se gestionan con sus mecanismos de inicio de sesión existentes. Mantén tokens y claves fuera de los archivos del proyecto. Las rutas de esta fase usan `cell-a`; las membresías y nombres visibles son datos de Firestore.
 
+- [Plan de bucket privado en GCP](docs/GCP_STORAGE_SETUP.md)
+- [GitHub Pages](docs/GITHUB_PAGES.md)
 - [Handouts multimedia · carga local de imagen y PDF](docs/HANDOUTS.md)
 - [Pruebas locales e imagen estática con Docker](docs/DOCKER.md)
 - [Arquitectura y bootstrap](docs/ARCHITECTURE.md)

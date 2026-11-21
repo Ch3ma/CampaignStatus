@@ -1,6 +1,8 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
-export async function demoPdf() {
+import { demoImage } from './demo-image.mjs';
+
+export async function demoPdf({ large = false } = {}) {
   const document = await PDFDocument.create({ updateMetadata: false });
   const regular = await document.embedFont(StandardFonts.Helvetica);
   const bold = await document.embedFont(StandardFonts.HelveticaBold);
@@ -11,6 +13,7 @@ export async function demoPdf() {
     ['Verificación de respuesta', ['El segundo turno repitió la medición.', 'La lectura de control confirmó los tres pulsos.']],
   ];
 
+  const figure = large ? await document.embedPng(demoImage({ large: true })) : null;
   sheets.forEach(([title, lines], index) => {
     const page = document.addPage([480, 320]);
     page.drawRectangle({ x: 0, y: 0, width: 480, height: 320, color: rgb(0.95, 0.93, 0.86) });
@@ -18,6 +21,7 @@ export async function demoPdf() {
     page.drawLine({ start: { x: 35, y: 248 }, end: { x: 445, y: 248 }, thickness: 1, color: green });
     page.drawText(title, { x: 35, y: 212, size: 22, font: bold, color: ink });
     lines.forEach((line, row) => page.drawText(line, { x: 35, y: 173 - row * 22, size: 13, font: regular, color: ink }));
+    if (figure && index === 0) page.drawImage(figure, { x: 35, y: 28, width: 118, height: 94 });
     page.drawText(`${index + 1} / ${sheets.length}`, { x: 414, y: 32, size: 10, font: regular, color: green });
   });
 

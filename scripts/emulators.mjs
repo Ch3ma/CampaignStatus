@@ -29,7 +29,7 @@ if (mode === 'exec') flags.push(args[0]);
 
 const child = spawn(process.execPath, [
   'node_modules/firebase-tools/lib/bin/firebase.js', `emulators:${mode}`,
-  '--config', configPath, '--project', 'demo-black-archive', '--only', 'auth,firestore', ...flags,
+  '--config', configPath, '--project', 'demo-black-archive', '--only', 'auth,firestore,storage', ...flags,
 ], { stdio: 'inherit' });
 
 let stopping = false;

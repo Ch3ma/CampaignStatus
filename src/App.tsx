@@ -78,7 +78,10 @@ function Session({ user }: { user: User }) {
   const session = { uid: user.uid, role: membership.role };
 
   return <div className="shell" key={membership.role}>
-    <a className="skip" href="#main-content">Saltar al contenido</a>
+    <a className="skip" href="#main-content" onClick={(event) => {
+      event.preventDefault();
+      document.getElementById('main-content')?.focus();
+    }}>Saltar al contenido</a>
     <aside className="rail">
       <Link to="/" className="brand-link" aria-label="BLACK ARCHIVE, inicio"><Brand /></Link>
       <div className="cell-label"><span className="dot" />{cellName}</div>
