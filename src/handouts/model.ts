@@ -19,7 +19,7 @@ export type HandoutFields = {
   downloadAllowed: boolean;
 };
 export const emptyCloud = { active: '', pending: '', cleanup: '' };
-export type CloudState = typeof emptyCloud;
+export type CloudState = typeof emptyCloud & { pendingBytes?: number };
 export type CloudVersion = {
   id: string; mime: HandoutMime; byteLength: number; sourceHash: string;
   status: 'pending' | 'ready' | 'discarding' | 'discarded';

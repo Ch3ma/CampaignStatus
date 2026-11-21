@@ -1,8 +1,8 @@
-import { deleteObject, getBytes, ref, uploadBytesResumable } from 'firebase/storage';
+import { deleteObject, getBytes, getMetadata, ref, uploadBytesResumable } from 'firebase/storage';
 import { cellId } from '../domain';
 import { storage } from '../firebase';
 import { decryptFile, encryptFile, mediaContext, sourceDigest } from './envelope';
-import { envelopeOverhead, storageLimit } from './limits';
+import { envelopeOverhead, maxStorageBytes, storageLimit } from './limits';
 import type { CloudVersion, HandoutMime } from './model';
 
 export const uploadLimit = storageLimit(import.meta.env.VITE_HANDOUT_MAX_MIB);
@@ -19,6 +19,9 @@ function notFound(error: unknown) {
 export async function readCloudFile(
   handoutId: string, versionId: string, mime: HandoutMime, size: number, key: string,
 ) {
+  if (!Number.isSafeInteger(size) || size <= 0 || size > maxStorageBytes) {
+    throw new Error('El tamaño registrado está fuera del límite compatible.');
+  }
   const sealed = await getBytes(objectRef(handoutId, versionId), size + envelopeOverhead);
   if (sealed.byteLength !== size + envelopeOverhead) throw new Error('La longitud del archivo no coincide.');
   return new Uint8Array(await decryptFile(sealed, key, mediaContext(cellId, handoutId, versionId, mime)));
@@ -41,6 +44,7 @@ export async function uploadCloudFile(
   } catch (error) {
     if (!notFound(error)) throw error;
   }
+  signal.throwIfAborted();
   const envelope = await encryptFile(bytes, key, mediaContext(cellId, handoutId, version.id, version.mime));
   signal.throwIfAborted();
   const task = uploadBytesResumable(objectRef(handoutId, version.id), envelope, {
@@ -52,11 +56,20 @@ export async function uploadCloudFile(
     progress(Math.round(100 * snapshot.bytesTransferred / snapshot.totalBytes));
   });
   try {
-    await task;
+    const result = await task;
+    if (result.metadata.size !== envelope.byteLength) throw new Error('La carga guardada tiene un tamaño incorrecto.');
   } finally {
     unsubscribe();
     signal.removeEventListener('abort', abort);
   }
+}
+
+export async function verifyCloudObject(handoutId: string, versionId: string, size: number) {
+  const metadata = await getMetadata(objectRef(handoutId, versionId)).catch((error: unknown) => {
+    if (notFound(error)) throw new Error('El archivo guardado no está disponible. Selecciona una copia para reemplazarlo.');
+    throw error;
+  });
+  if (metadata.size !== size + envelopeOverhead) throw new Error('El archivo guardado tiene un tamaño incorrecto.');
 }
 
 export async function deletePendingFile(handoutId: string, versionId: string) {

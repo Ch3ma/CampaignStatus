@@ -31,7 +31,7 @@ export async function encryptFile(bytes: Uint8Array<ArrayBuffer>, value: string,
 
 export async function decryptFile(bytes: ArrayBuffer, value: string, context: Uint8Array<ArrayBuffer>) {
   return crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: bytes.slice(0, ivSize), additionalData: context },
-    await importKey(value, 'decrypt'), bytes.slice(ivSize),
+    { name: 'AES-GCM', iv: new Uint8Array(bytes, 0, ivSize), additionalData: context },
+    await importKey(value, 'decrypt'), new Uint8Array(bytes, ivSize),
   );
 }

@@ -129,7 +129,7 @@ try {
       const [existing, ...snapshots] = await Promise.all([policy, ...refs].map((ref) => transaction.get(ref)));
       const previous = existing.data()?.blockedHashes ?? [];
       const blockedHashes = [...new Set([...previous, testHash, ...extra])];
-      if (!existing.exists() || blockedHashes.length !== previous.length) transaction.set(policy, { blockedHashes });
+      if (!existing.exists() || blockedHashes.length !== previous.length) transaction.set(policy, { blockedHashes }, { merge: true });
       for (const [index, snapshot] of snapshots.entries()) {
         if (!snapshot.exists()) transaction.set(refs[index], packet[index][1]);
       }

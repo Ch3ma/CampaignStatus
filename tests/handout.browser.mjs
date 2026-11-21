@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { mkdtemp, open, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { demoImage } from '../scripts/demo-image.mjs';
 import { demoPdf } from '../scripts/demo-pdf.mjs';
@@ -162,6 +165,7 @@ async function publishUpload(handler) {
 
 test('Handler uploads PNG and PDF drafts, edits references and reopens the files in another session', { timeout: 120000 }, async () => {
   const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined });
+  const fixtureDir = await mkdtemp(join(tmpdir(), 'black-archive-browser-'));
   try {
     const creator = await browser.newPage();
     creator.setDefaultTimeout(15000);
@@ -178,8 +182,15 @@ test('Handler uploads PNG and PDF drafts, edits references and reopens the files
       await creator.getByRole('button', { name: 'Nuevo handout', exact: true }).click();
       const picker = creator.getByLabel('Archivo multimedia');
       if (!pdf) {
-        await picker.setInputFiles({ name: 'large.png', mimeType, buffer: Buffer.alloc(20 * 1024 * 1024 + 1) });
-        await creator.getByText(/no supere 20 MiB/).waitFor();
+        const oversized = join(fixtureDir, 'large.png');
+        const handle = await open(oversized, 'w');
+        try {
+          await handle.truncate(64 * 1024 * 1024 + 1);
+        } finally {
+          await handle.close();
+        }
+        await picker.setInputFiles(oversized);
+        await creator.getByText(/no supere 64 MiB/).waitFor();
         await picker.setInputFiles({ name: 'bad.png', mimeType, buffer: Buffer.from('<svg>') });
         await creator.getByText(/La firma del archivo/).waitFor();
         assert.equal(await creator.getByRole('button', { name: 'Guardar borrador' }).isDisabled(), true);
@@ -246,6 +257,7 @@ test('Handler uploads PNG and PDF drafts, edits references and reopens the files
     }
   } finally {
     await browser.close();
+    await rm(fixtureDir, { recursive: true, force: true });
   }
 });
 

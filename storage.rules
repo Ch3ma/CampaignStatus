@@ -11,19 +11,23 @@ service firebase.storage {
       function validAddress() {
         return handoutId.matches('^[a-zA-Z0-9_-]{1,128}$') && revision.matches('^[a-zA-Z0-9]{20}$');
       }
-      function assignedRevision(field) {
-        return handout().cloud[field] == revision;
+      function releasedRevision() {
+        let record = handout();
+        return record.status == 'published' && record.cloud.active == revision;
+      }
+      function validUpload() {
+        let record = handout();
+        return record.status != 'published' && record.cloud.pending == revision
+          && request.resource.size == record.cloud.pendingBytes + 28
+          && request.resource.contentType == 'application/octet-stream'
+          && request.resource.contentDisposition == 'attachment'
+          && request.resource.metadata.keys().hasOnly([]);
       }
       allow get: if request.auth != null && validAddress()
-        && (role() == 'handler' || (role() == 'agent' && handout().status == 'published'
-          && assignedRevision('active')));
+        && (role() == 'handler' || (role() == 'agent' && releasedRevision()));
       allow create: if request.auth != null && validAddress() && role() == 'handler'
-        && resource == null && assignedRevision('pending') && handout().status != 'published'
-        && request.resource.contentType == 'application/octet-stream'
-        && request.resource.contentDisposition == 'attachment'
-        && request.resource.size > 28 && request.resource.size <= 33554460
-        && request.resource.metadata.keys().hasOnly([]);
-      allow delete: if request.auth != null && validAddress() && role() == 'handler' && assignedRevision('cleanup');
+        && resource == null && validUpload();
+      allow delete: if request.auth != null && validAddress() && role() == 'handler' && handout().cloud.cleanup == revision;
     }
   }
 }

@@ -35,7 +35,7 @@ function PrivateProvenance({ id }: { id: string }) {
   </section>;
 }
 
-type Transfer = { busy: boolean; percent: number; error: string };
+type Transfer = { busy: boolean; uploading?: boolean; percent: number; error: string };
 type FileActions = {
   upload: (handout: Handout, file: File) => void;
   discard: (handout: Handout) => void;
@@ -158,11 +158,11 @@ export function ManageHandouts({ uid }: { uid: string }) {
   const handout = records?.find((item) => item.id === selected);
   useEffect(() => () => controller.current?.abort(), []);
 
-  async function run(action: (signal: AbortSignal) => Promise<void>) {
+  async function run(action: (signal: AbortSignal) => Promise<void>, uploading = false) {
     if (controller.current) return;
     const task = new AbortController();
     controller.current = task;
-    setTransfer({ busy: true, percent: 0, error: '' });
+    setTransfer({ busy: true, uploading, percent: 0, error: '' });
     try { await action(task.signal); }
     catch (error) {
       const detail = error instanceof Error && !('code' in error) && error.message ? error.message
@@ -181,7 +181,7 @@ export function ManageHandouts({ uid }: { uid: string }) {
       signal.throwIfAborted();
       const revision = current.cloud?.pending || await stageReplacement(current, selected);
       await completeUpload(current.id, revision, selected, signal, track);
-    }),
+    }, true),
     discard: (current) => void run(() => discardUpload(current)),
     restore: (current, version) => void run(() => restoreVersion(current, version)),
   };
@@ -192,7 +192,7 @@ export function ManageHandouts({ uid }: { uid: string }) {
       setSelected(created.id);
       setCreating(false);
       await completeUpload(created.id, created.revision, file, signal, track);
-    });
+    }, true);
   }
 
   return <div className="manage-grid">
@@ -213,10 +213,10 @@ export function ManageHandouts({ uid }: { uid: string }) {
     </section>}
     {(transfer.busy || transfer.error) && <div className="panel handout-panel">
       {transfer.error && <p className="error" role="alert">{transfer.error}</p>}
-      {transfer.busy && <>
+      {transfer.busy && (transfer.uploading ? <>
         <progress aria-label="Progreso de almacenamiento" value={transfer.percent} max={100} />
         <button type="button" onClick={() => controller.current?.abort()}>Cancelar carga</button>
-      </>}
+      </> : <p role="status">Actualizando el archivo…</p>)}
     </div>}
     {handout && <ManageItem key={`${handout.id}/${handout.version}`} handout={handout} uid={uid} options={options} transfer={transfer} actions={actions} />}
   </div>;

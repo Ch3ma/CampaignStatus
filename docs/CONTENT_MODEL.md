@@ -35,6 +35,6 @@ El panel guarda la ficha, el archivo, los vínculos y la procedencia en una sola
 
 ### Binarios en Storage
 
-La ficha incorpora `cloud.active`, `cloud.pending` y `cloud.cleanup` con IDs opacos. Las revisiones se conservan en `versions/{id}`, de lectura exclusiva del Handler. Las claves separadas en `keys/{id}` se liberan solo para la revisión activa de una ficha publicada. El objeto cifrado vive bajo `cell-handouts/{cellId}/{handoutId}/{versionId}/content`. La política `handoutPolicy/sources` reserva hashes de fuentes privadas.
+La ficha incorpora `cloud.active`, `cloud.pending` y `cloud.cleanup` con IDs opacos. `cloud.pendingBytes` liga el tamaño del objeto al tamaño aprobado para la revisión pendiente. Las revisiones se conservan en `versions/{id}`, de lectura exclusiva del Handler. Las claves separadas en `keys/{id}` se liberan solo para la revisión activa de una ficha publicada. El objeto cifrado vive bajo `cell-handouts/{cellId}/{handoutId}/{versionId}/content`. La política `handoutPolicy/sources` reserva hashes de fuentes privadas y define el límite de tamaño de nuevas revisiones de la célula.
 
 La ficha solo se publica con una revisión finalizada, sin cambios pendientes, y con la operación autorizada. El Handler puede restaurar una revisión anterior y liberar la nueva ficha con una acción explícita. Los archivos inline del emulador se leen con el flujo heredado hasta que una revisión de Storage pasa a activa.

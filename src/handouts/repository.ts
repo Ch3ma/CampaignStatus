@@ -1,5 +1,6 @@
 import { createKey, sourceDigest } from './envelope';
-import { deletePendingFile, readCloudFile, uploadCloudFile } from './storage';
+import { cellStorageLimit } from './limits';
+import { deletePendingFile, readCloudFile, uploadCloudFile, verifyCloudObject } from './storage';
 import type { CheckedHandout } from './upload';
 import {
   Bytes, collection, doc, getDocFromServer, getDocsFromServer, onSnapshot, query, runTransaction,
@@ -146,10 +147,14 @@ function writeRelations(writer: RelationWriter, target: DocumentReference, data:
 }
 
 async function pendingVersion(target: DocumentReference, file: CheckedHandout) {
-  const sourceHash = await sourceDigest(file.bytes);
-  const policy = await getDocFromServer(doc(database(), 'cells', cellId, 'handoutPolicy', 'sources'));
-  const blocked: unknown = policy.data()?.blockedHashes;
+  const policy = (await getDocFromServer(doc(database(), 'cells', cellId, 'handoutPolicy', 'sources'))).data();
+  const blocked: unknown = policy?.blockedHashes;
   if (!Array.isArray(blocked) || blocked.length === 0) throw new Error('Configura la política de fuentes reservadas.');
+  const limit = cellStorageLimit(policy?.maxBytes);
+  if (file.bytes.length > limit) {
+    throw new Error(`El límite de la célula es de ${limit / (1024 * 1024)} MiB por archivo.`);
+  }
+  const sourceHash = await sourceDigest(file.bytes);
   if (blocked.includes(sourceHash)) throw new Error('Este archivo pertenece a las fuentes reservadas.');
   const revision = doc(collection(target, 'versions')).id;
   return {
@@ -170,7 +175,7 @@ export async function createHandout(fields: HandoutFields, relations: RelationFi
   const batch = writeBatch(database());
   batch.set(target, {
     ...fields, mime: file.mime, byteLength: file.bytes.length, status: 'draft',
-    cloud: { ...emptyCloud, pending: pending.id },
+    cloud: { ...emptyCloud, pending: pending.id, pendingBytes: pending.data.byteLength },
     createdAt: serverTimestamp(), createdBy: uid, updatedAt: serverTimestamp(), publishedAt: null, publishedBy: '',
   });
   writePending(batch, target, pending);
@@ -188,7 +193,7 @@ export async function stageReplacement(handout: Handout, file: CheckedHandout) {
     const data = (await transaction.get(target)).data();
     if (!data || recordVersion(data.updatedAt) !== handout.version) throw new RecordChangedError();
     transaction.update(target, {
-      cloud: { ...cloud, pending: pending.id },
+      cloud: { ...cloud, pending: pending.id, pendingBytes: pending.data.byteLength },
       status: handout.status === 'published' ? 'review' : handout.status, updatedAt: serverTimestamp(),
     });
     writePending(transaction, target, pending);
@@ -203,6 +208,19 @@ export async function completeUpload(
   const versionData = (await getDocFromServer(versionRef(target, revision))).data();
   if (!versionData || versionData.status !== 'pending') throw new RecordChangedError();
   const version = { ...versionData, id: revision } as CloudVersion;
+  const present = (await getDocFromServer(target)).data();
+  if (present?.cloud?.pending !== revision) throw new RecordChangedError();
+  if (present.cloud.pendingBytes === undefined) {
+    // Bind the expected size of a legacy pending revision without changing its key or object.
+    await runTransaction(database(), async (transaction) => {
+      const current = (await transaction.get(target)).data();
+      if (current?.cloud?.pending !== revision) throw new RecordChangedError();
+      if (current.cloud.pendingBytes === undefined) {
+        transaction.update(target, { 'cloud.pendingBytes': version.byteLength, updatedAt: serverTimestamp() });
+      }
+    });
+  }
+  signal.throwIfAborted();
   await uploadCloudFile(id, version, await getKey(id, revision), file.bytes, signal, progress);
   signal.throwIfAborted();
   await runTransaction(database(), async (transaction) => {
@@ -225,7 +243,7 @@ export async function discardUpload(handout: Handout) {
     await runTransaction(database(), async (transaction) => {
       const current = (await transaction.get(target)).data();
       if (current?.cloud?.pending !== id) throw new RecordChangedError();
-      transaction.update(target, { cloud: { ...cloud, pending: '', cleanup: id }, updatedAt: serverTimestamp() });
+      transaction.update(target, { cloud: { ...emptyCloud, active: cloud.active, cleanup: id }, updatedAt: serverTimestamp() });
       transaction.update(versionRef(target, id), { status: 'discarding' });
     });
   }
@@ -246,6 +264,7 @@ export async function getReadyVersions(id: string) {
 }
 
 export async function restoreVersion(handout: Handout, version: CloudVersion) {
+  await verifyCloudObject(handout.id, version.id, version.byteLength);
   const target = recordRef(handout.id);
   await runTransaction(database(), async (transaction) => {
     const current = (await transaction.get(target)).data();
@@ -260,6 +279,9 @@ export async function restoreVersion(handout: Handout, version: CloudVersion) {
 export async function updateHandout(
   handout: Handout, update: HandoutFields | 'published' | 'archived' | 'draft', uid: string, relations?: RelationFields,
 ) {
+  if (update === 'published' && handout.cloud?.active) {
+    await verifyCloudObject(handout.id, handout.cloud.active, handout.byteLength);
+  }
   if (relations && !isDemo && !handout.cloud) throw new Error('La edición de referencias requiere emuladores locales.');
   const target = recordRef(handout.id);
   await runTransaction(database(), async (transaction) => {

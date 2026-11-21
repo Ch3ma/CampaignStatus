@@ -28,12 +28,18 @@ test('Pages assets and hash routes work under the project subpath', { timeout: 6
     browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined });
     const production = await browser.newPage();
     const productionErrors = [];
+    const emulatorRequests = [];
+    production.on('request', (request) => {
+      if (/^https?:\/\/(localhost|127\.0\.0\.1):(9099|8080|9199)\b/.test(request.url())) emulatorRequests.push(request.url());
+    });
     production.on('pageerror', (error) => productionErrors.push(error.message));
     await production.goto(built + route);
     await production.getByText(/Firebase no está disponible|Identificación/).first().waitFor();
     await production.reload();
     assert.equal(production.url(), built + route);
     assert.deepEqual(productionErrors, []);
+    assert.deepEqual(emulatorRequests, []);
+    assert.equal(await production.getByRole('button', { name: 'Entrar como agente' }).count(), 0);
 
     const agent = await browser.newPage();
     await agent.goto(local + route);

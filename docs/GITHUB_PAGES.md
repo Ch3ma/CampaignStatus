@@ -9,11 +9,20 @@ Gitleaks y las comprobaciones dirigidas cubrieron las nueve revisiones alcanzabl
 ## Comprobaciones antes de publicar
 
 1. Confirma la auditoría de credenciales e historial. Se identificó correo personal de autor en commits de merge históricos. Resuelve ese dato con el propietario antes del primer despliegue y configura el correo de GitHub `noreply` para futuros commits y merges. El historial existente requiere una decisión aparte.
-2. En GitHub **Settings → Pages**, verifica que **Source** sea **GitHub Actions**. Configura las variables de Actions `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID` y `VITE_FIREBASE_APP_ID` con la configuración web pública del proyecto confirmado. Usa `VITE_FIREBASE_STORAGE_BUCKET` solo tras habilitar un bucket autorizado. `VITE_HANDOUT_MAX_MIB` es opcional.
-3. En Firebase Authentication confirma la autorización del dominio `ch3ma.github.io` y revisa las restricciones de la clave web para los servicios que usa la aplicación. Verifica reglas, membresías y CORS de Storage con cuentas de prueba. La cuenta de servicio, credenciales de GCP y los archivos privados quedan fuera de las variables públicas y del artefacto.
+2. En GitHub **Settings → Pages**, verifica que **Source** sea **GitHub Actions**. En **Settings → Secrets and variables → Actions → Variables**, registra las variables de la tabla con la configuración pública de **Firebase → Project settings → General → Your apps → Web app**. El workflow requiere el bucket confirmado.
+3. En **Firebase Authentication → Settings → Authorized domains**, añade `ch3ma.github.io` sin esquema ni ruta y revisa las restricciones de la clave web para los servicios que usa la aplicación. Verifica reglas, membresías y CORS de Storage con cuentas de prueba. La cuenta de servicio, credenciales de GCP y los archivos privados quedan fuera de las variables públicas y del artefacto.
 4. Cuando el propietario apruebe el despliegue, establece la variable de repositorio `PAGES_RELEASE_APPROVED` a `true`. Ejecuta **Actions → GitHub Pages → Run workflow** sobre `main`. El workflow se ejecuta manualmente. El trabajo que publica en el entorno `github-pages` recibe solo los permisos para Pages y emisión de identidad. Si se usa revisión del entorno, debe completarse antes de publicar.
 
-GitHub Pages sirve únicamente el build público. Firestore y Storage autorizan los registros y binarios. La activación de Pages es independiente del aprovisionamiento del bucket privado.
+GitHub Pages sirve únicamente el build público. Firestore y Storage autorizan los registros y binarios. El workflow de este portal valida las siguientes variables antes de generar el artefacto.
+
+| Variable | Valor |
+| --- | --- |
+| `VITE_FIREBASE_API_KEY` | `apiKey` de la aplicación web |
+| `VITE_FIREBASE_AUTH_DOMAIN` | `authDomain` de la app web, habitualmente `PROJECT_ID.firebaseapp.com` |
+| `VITE_FIREBASE_PROJECT_ID` | `projectId` de la app web |
+| `VITE_FIREBASE_APP_ID` | `appId` de la app web |
+| `VITE_FIREBASE_STORAGE_BUCKET` | Nombre del bucket vinculado a Firebase, sin `gs://` ni ruta |
+| `VITE_HANDOUT_MAX_MIB` | Opcional. Entero de 1 a 128, 64 por defecto |
 
 ## Prueba local
 
